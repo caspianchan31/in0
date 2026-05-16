@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig and fill in.
+// Local.xcconfig is gitignored.
+
+// DEVELOPMENT_TEAM = ABCDE12345
+// CODE_SIGN_STYLE = Automatic
+// CODE_SIGN_IDENTITY = Apple Development

@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "comment": "Lockfile for any superpowers-skills tooling that wants to verify the in0 repo is on a known-good baseline. Empty on the public repo — populated downstream by the agent harness."
+}

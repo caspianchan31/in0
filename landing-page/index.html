@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>in0 — macOS terminal multiplexer with live agent status</title>
+<meta name="description" content="Workspaces, tabs, splits, and a sidebar that tells you whether Claude / Codex / OpenCode is still working." />
+<meta property="og:title" content="in0" />
+<meta property="og:description" content="Live agent-status terminal multiplexer for macOS." />
+<meta property="og:image" content="/assets/og.png" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="/assets/logo.png" />
+<style>
+  :root {
+    --bg: #0e0d12;
+    --fg: #e7e5e2;
+    --muted: #8a8a8a;
+    --accent: #df8e1d;
+    --border: #2a2730;
+    --card: #16141b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  main { max-width: 880px; margin: 0 auto; padding: 64px 24px 96px; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 48px; }
+  header img { width: 36px; height: 36px; }
+  header h1 {
+    margin: 0;
+    font-weight: 800;
+    font-size: 24px;
+    letter-spacing: 0.5px;
+  }
+  .hero { margin-bottom: 56px; }
+  .hero h2 {
+    font-size: 40px;
+    line-height: 1.15;
+    font-weight: 800;
+    margin: 0 0 16px;
+    letter-spacing: -0.5px;
+  }
+  .hero p {
+    font-size: 18px;
+    color: var(--muted);
+    max-width: 640px;
+    margin: 0 0 32px;
+  }
+  .download {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 22px;
+    background: var(--accent);
+    color: #1a1208;
+    font-weight: 700;
+    border-radius: 10px;
+    font-size: 16px;
+  }
+  .download:hover { text-decoration: none; opacity: 0.92; }
+  .meta {
+    display: inline-block;
+    margin-left: 12px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 56px 0;
+  }
+  @media (max-width: 640px) {
+    .features { grid-template-columns: 1fr; }
+  }
+  .feature {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .feature h3 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .feature p { margin: 0; color: var(--fg); font-size: 15px; }
+  .install h3 {
+    margin: 32px 0 12px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+  pre {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--fg);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="/assets/logo.png" alt="in0" />
+    <h1>in0.</h1>
+  </header>
+
+  <section class="hero">
+    <h2>The terminal that tells you when your agent is done.</h2>
+    <p>
+      in0 is a macOS workspaces / tabs / splits terminal app built on
+      libghostty. Every tab shows a live status dot driven by hooks
+      from Claude Code, Codex, and OpenCode — so you can step away
+      without missing the moment a turn finishes (or asks for input).
+    </p>
+    <a class="download" href="https://github.com/yourorg/in0/releases/latest" data-in0-version>v0.1.0</a>
+    <span class="meta">macOS 14+ · Apple Silicon · ~14 MB DMG</span>
+  </section>
+
+  <section class="features">
+    <div class="feature">
+      <h3>Live agent status</h3>
+      <p>Sidebar dot shows running / idle / needs-input / finished
+         per workspace, broadcast over a Unix socket from the agent
+         hook scripts. Tooltip carries the last assistant message.</p>
+    </div>
+    <div class="feature">
+      <h3>Workspaces · tabs · splits</h3>
+      <p>Persistent layout across restarts. Drag to reorder, double
+         click to rename, ⌘⌥arrows to focus a neighbor pane. Splits
+         inherit pwd from the pane you branched off of.</p>
+    </div>
+    <div class="feature">
+      <h3>Quick actions</h3>
+      <p>Built-in launchers for <code>claude</code>, <code>codex</code>,
+         <code>opencode</code>, <code>gitui</code>. Add custom rows in
+         Settings — anything you'd type plus a name.</p>
+    </div>
+    <div class="feature">
+      <h3>Resume mid-session</h3>
+      <p>Each agent's most recent <code>--resume</code> command is
+         persisted per terminal. Reopen in0, hit the Quick Action,
+         and you're back where you left off.</p>
+    </div>
+  </section>
+
+  <section class="install">
+    <h3>Or build from source</h3>
+    <pre><code>git clone https://github.com/yourorg/in0
+cd in0
+./scripts/build-vendor.sh        # libghostty.a (~30 min first run)
+./scripts/regen-project.sh       # generate Xcode project
+xcodebuild -project in0.xcodeproj -scheme in0 build</code></pre>
+
+    <h3>Enable agent hooks (one-time, per shell)</h3>
+    <pre><code># bash
+[ -f "$IN0_AGENT_HOOKS_DIR/bootstrap.bash" ] && source "$IN0_AGENT_HOOKS_DIR/bootstrap.bash"
+
+# zsh — auto-activates via ZDOTDIR shim, no rc edit needed
+
+# fish
+if set -q IN0_AGENT_HOOKS_DIR
+    source "$IN0_AGENT_HOOKS_DIR/bootstrap.fish"
+end</code></pre>
+  </section>
+
+  <footer>
+    <p>
+      <a href="https://github.com/yourorg/in0">GitHub</a> ·
+      <a href="https://github.com/yourorg/in0/blob/master/docs/architecture.md">Docs</a> ·
+      <a href="https://github.com/yourorg/in0/releases/latest/download/appcast.xml">Sparkle appcast</a>
+    </p>
+    <p>
+      in0 ships under the in0 Source-Available License (see LICENSE).
+      libghostty is MIT, statically linked.
+    </p>
+  </footer>
+</main>
+</body>
+</html>

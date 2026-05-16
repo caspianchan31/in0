@@ -1,0 +1,30 @@
+## macOS
+.DS_Store
+
+## Xcode build outputs
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.moved-aside
+
+## Generated Xcode project (xcodegen owns it)
+in0.xcodeproj/
+
+## Per-developer config — see Local.xcconfig.example
+Local.xcconfig
+
+## Vendored/reference artifacts built or checked out locally
+vendor/
+
+## Local Claude settings (per-developer)
+.claude/settings.local.json
+
+## Swift / SPM
+.build/
+Packages/
+Package.pins
+
+## Logs
+*.log

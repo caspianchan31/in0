@@ -1,0 +1,179 @@
+name: in0
+options:
+  bundleIdPrefix: com.local
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: false
+  generateEmptyDirectories: false
+
+configs:
+  Debug: debug
+  Release: release
+
+# Sparkle SPM dependency. Disabled by default so offline / fresh-clone
+# builds stay green — `SparkleBridge` and `UpdateUserDriver` fall back to
+# their no-op `#if canImport(Sparkle)` stubs when the dep isn't linked.
+# To enable on a network-connected machine: uncomment this block AND the
+# `- package: Sparkle` line under `targets.in0.dependencies`, then run
+# `./scripts/regen-project.sh`. Set `SUFeedURL` + `SUPublicEDKey` in
+# `Info.plist` before shipping a Release build.
+# packages:
+#   Sparkle:
+#     url: https://github.com/sparkle-project/Sparkle
+#     from: "2.6.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    DEAD_CODE_STRIPPING: YES
+    CLANG_ENABLE_MODULES: YES
+    CLANG_ENABLE_OBJC_ARC: YES
+    SWIFT_OBJC_BRIDGING_HEADER: in0/Ghostty/in0-bridging-header.h
+    HEADER_SEARCH_PATHS:
+      - $(SRCROOT)/vendor/ghostty/include
+    LIBRARY_SEARCH_PATHS:
+      - $(SRCROOT)/vendor/ghostty/lib
+    OTHER_LDFLAGS:
+      - -lghostty
+      - -lc++
+      - -framework
+      - Cocoa
+      - -framework
+      - Metal
+      - -framework
+      - MetalKit
+      - -framework
+      - QuartzCore
+      - -framework
+      - CoreText
+      - -framework
+      - CoreVideo
+      - -framework
+      - IOSurface
+      - -framework
+      - AppKit
+      - -framework
+      - UserNotifications
+      - -framework
+      - AudioToolbox
+      - -framework
+      - SystemConfiguration
+      - -framework
+      - CoreServices
+      - -framework
+      - Security
+      - -framework
+      - LocalAuthentication
+      - -framework
+      - Carbon
+      - -framework
+      - OSLog
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: -Onone
+      GCC_OPTIMIZATION_LEVEL: 0
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: -O
+      GCC_OPTIMIZATION_LEVEL: s
+
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
+fileGroups:
+  - Config.xcconfig
+  - Local.xcconfig.example
+  - project.yml
+
+targets:
+  in0:
+    type: application
+    platform: macOS
+    sources:
+      - path: in0
+        excludes:
+          - "**/.DS_Store"
+    # dependencies:
+    #   - package: Sparkle
+    #     product: Sparkle
+    preBuildScripts:
+      - name: Copy in0 agent hooks
+        script: |
+          # Mirror Resources/agent-hooks/ flat into the bundle's Resources
+          # dir. Doing it via script (rather than `path: Resources type:
+          # folder`) keeps files at Contents/Resources/agent-hooks/...
+          # instead of Contents/Resources/Resources/agent-hooks/... which
+          # is what the blue-folder strategy produces.
+          DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/agent-hooks"
+          mkdir -p "$DST"
+          rm -rf "$DST"
+          cp -R "$SRCROOT/Resources/agent-hooks/" "$DST/"
+          chmod +x "$DST"/*.sh 2>/dev/null || true
+        basedOnDependencyAnalysis: false
+      - name: Copy ghostty resources
+        script: |
+          # Ship ghostty's shell-integration scripts + terminfo + themes so
+          # libghostty can find them at runtime. Without this we get the
+          # test-log warnings: "ghostty terminfo not found, using
+          # xterm-256color" and "no resources dir set, shell integration
+          # disabled". GhosttyBridge advertises this dir to libghostty as
+          # `resources-dir`. The vendor layout (build-vendor.sh) puts the
+          # contents directly under `vendor/ghostty/share/`, so we copy the
+          # whole directory.
+          SRC="$SRCROOT/vendor/ghostty/share"
+          DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ghostty"
+          if [ -d "$SRC" ]; then
+            rm -rf "$DST"
+            mkdir -p "$DST"
+            cp -R "$SRC/." "$DST/"
+          else
+            echo "warning: vendor/ghostty/share missing — re-run scripts/build-vendor.sh to ship terminfo + shell integration"
+          fi
+        basedOnDependencyAnalysis: false
+    info:
+      path: in0/Info.plist
+      properties:
+        CFBundleName: in0
+        CFBundleDisplayName: in0
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSHighResolutionCapable: true
+        NSSupportsAutomaticTermination: false
+        NSSupportsSuddenTermination: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+        LSApplicationCategoryType: public.app-category.developer-tools
+    entitlements:
+      path: in0/in0.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.cs.allow-jit: true
+        com.apple.security.cs.allow-unsigned-executable-memory: true
+        com.apple.security.cs.disable-library-validation: true
+        com.apple.security.device.audio-input: false
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+  in0Tests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - in0Tests
+    dependencies:
+      - target: in0
+    settings:
+      base:
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/in0.app/Contents/MacOS/in0
+        GENERATE_INFOPLIST_FILE: YES
