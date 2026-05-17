@@ -453,11 +453,11 @@ enum TerminalClipboardPayload {
         if let filePayload = fileURLPayload(from: pasteboard) {
             return filePayload
         }
-        if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            return text
-        }
         if let imagePayload = imagePayload(from: pasteboard) {
             return imagePayload
+        }
+        if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            return text
         }
         return nil
     }
@@ -475,17 +475,49 @@ enum TerminalClipboardPayload {
     }
 
     private static func imagePayload(from pasteboard: NSPasteboard) -> String? {
-        if let pngData = pasteboard.data(forType: .png),
+        if let pngData = firstData(in: pasteboard, forTypes: [.png, NSPasteboard.PasteboardType("public.png")]),
            let path = writeImageData(pngData, fileExtension: "png") {
             return shellQuotedPath(path)
         }
-        guard let tiffData = pasteboard.data(forType: .tiff),
-              let image = NSImage(data: tiffData),
-              let pngData = pngData(from: image),
-              let path = writeImageData(pngData, fileExtension: "png") else {
-            return nil
+
+        if let image = image(from: pasteboard),
+           let pngData = pngData(from: image),
+           let path = writeImageData(pngData, fileExtension: "png") {
+            return shellQuotedPath(path)
         }
-        return shellQuotedPath(path)
+
+        return nil
+    }
+
+    private static func image(from pasteboard: NSPasteboard) -> NSImage? {
+        if let tiffData = firstData(in: pasteboard, forTypes: [.tiff, NSPasteboard.PasteboardType("public.tiff")]),
+           let image = NSImage(data: tiffData) {
+            return image
+        }
+        if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
+           let image = images.first {
+            return image
+        }
+        return NSImage(pasteboard: pasteboard)
+    }
+
+    private static func firstData(
+        in pasteboard: NSPasteboard,
+        forTypes types: [NSPasteboard.PasteboardType]
+    ) -> Data? {
+        for type in types {
+            if let data = pasteboard.data(forType: type), !data.isEmpty {
+                return data
+            }
+        }
+        for item in pasteboard.pasteboardItems ?? [] {
+            for type in types {
+                if let data = item.data(forType: type), !data.isEmpty {
+                    return data
+                }
+            }
+        }
+        return nil
     }
 
     private static func pngData(from image: NSImage) -> Data? {

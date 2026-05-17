@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import in0
 
 /// `WorkspaceDefaultCommand.startupInput(for:)` is the small pure helper
@@ -24,6 +25,32 @@ final class GhosttyBridgeCommandTests: XCTestCase {
         )
     }
 
+    func testTerminalClipboardPayloadWritesImagePasteboardToPath() throws {
+        let pasteboard = NSPasteboard(name: .init("in0.image-payload.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.tiff], owner: nil)
+        try pasteboard.setTestImage()
+
+        let payload = try XCTUnwrap(TerminalClipboardPayload.payload(from: pasteboard))
+        let path = unquotedPath(from: payload)
+
+        XCTAssertTrue(path.hasSuffix(".png"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testTerminalClipboardPayloadPrefersImageOverFallbackText() throws {
+        let pasteboard = NSPasteboard(name: .init("in0.image-over-text.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.string, .tiff], owner: nil)
+        pasteboard.setString("fallback text", forType: .string)
+        try pasteboard.setTestImage()
+
+        let payload = try XCTUnwrap(TerminalClipboardPayload.payload(from: pasteboard))
+
+        XCTAssertNotEqual(payload, "fallback text")
+        XCTAssertTrue(unquotedPath(from: payload).hasSuffix(".png"))
+    }
+
     @MainActor
     func testTerminalCommandQueueStoresExecutableInput() {
         let terminalId = UUID()
@@ -37,5 +64,24 @@ final class GhosttyBridgeCommandTests: XCTestCase {
         let terminalId = UUID()
         TerminalCommandQueue.shared.enqueue("   ", for: terminalId)
         XCTAssertNil(TerminalCommandQueue.shared.drain(for: terminalId))
+    }
+
+    private func unquotedPath(from payload: String) -> String {
+        payload
+            .trimmingCharacters(in: CharacterSet(charactersIn: "'"))
+            .replacingOccurrences(of: "'\\''", with: "'")
+    }
+}
+
+private extension NSPasteboard {
+    func setTestImage() throws {
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.systemRed.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+        image.unlockFocus()
+
+        let data = try XCTUnwrap(image.tiffRepresentation)
+        setData(data, forType: .tiff)
     }
 }
