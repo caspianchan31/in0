@@ -5,6 +5,9 @@ import Foundation
 struct Workspace: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
+    /// Project folder backing this workspace. New workspaces are created
+    /// from a chosen folder; optional for old persisted workspaces.
+    var rootPath: String?
     var tabs: [TerminalTab]
     var selectedTabId: UUID?
     /// Optional shell command executed in newly created terminals inside
@@ -13,9 +16,16 @@ struct Workspace: Codable, Identifiable, Equatable {
     /// dev server launcher.
     var defaultCommand: String?
 
-    init(id: UUID = UUID(), name: String, tabs: [TerminalTab] = [], defaultCommand: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        rootPath: String? = nil,
+        tabs: [TerminalTab] = [],
+        defaultCommand: String? = nil
+    ) {
         self.id = id
         self.name = name
+        self.rootPath = rootPath
         self.tabs = tabs
         self.selectedTabId = tabs.first?.id
         self.defaultCommand = defaultCommand

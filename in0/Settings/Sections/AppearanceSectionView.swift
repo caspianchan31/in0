@@ -121,8 +121,10 @@ struct AppearanceSectionView: View {
                     set: { languageStore.choice = $0 }
                 )) {
                     Text(L10n.Settings.languageSystem).tag(LanguageStore.Choice.system)
-                    Text(verbatim: "中文（简体）").tag(LanguageStore.Choice.zh)
                     Text(verbatim: "English").tag(LanguageStore.Choice.en)
+                    Text(verbatim: "中文（简体）").tag(LanguageStore.Choice.zh)
+                    Text(verbatim: "中文（繁體）").tag(LanguageStore.Choice.zhHant)
+                    Text(verbatim: "日本語").tag(LanguageStore.Choice.ja)
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()

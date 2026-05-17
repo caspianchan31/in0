@@ -28,6 +28,38 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(store.workspaces[0].selectedTabId, t1)
     }
 
+    func testCloseOtherTabsKeepsRequestedTabAndCleansRemovedTerminals() {
+        let store = WorkspaceStore()
+        let wsId = store.workspaces[0].id
+        let t1 = store.workspaces[0].tabs[0]
+        let t2 = store.addTab(to: wsId, title: "two")!
+        let t3 = store.addTab(to: wsId, title: "three")!
+        var cleaned: [UUID] = []
+        store.terminalCleanup = { cleaned.append($0) }
+
+        store.closeOtherTabs(keeping: t2.id, in: wsId)
+
+        XCTAssertEqual(store.workspaces[0].tabs.map(\.id), [t2.id])
+        XCTAssertEqual(store.workspaces[0].selectedTabId, t2.id)
+        XCTAssertEqual(Set(cleaned), Set([t1.focusedTerminalId, t3.focusedTerminalId]))
+    }
+
+    func testCloseTabsToRightKeepsLeftTabsAndMovesSelectionWhenNeeded() {
+        let store = WorkspaceStore()
+        let wsId = store.workspaces[0].id
+        let t1 = store.workspaces[0].tabs[0]
+        let t2 = store.addTab(to: wsId, title: "two")!
+        let t3 = store.addTab(to: wsId, title: "three")!
+        var cleaned: [UUID] = []
+        store.terminalCleanup = { cleaned.append($0) }
+
+        store.closeTabsToRight(of: t1.id, in: wsId)
+
+        XCTAssertEqual(store.workspaces[0].tabs.map(\.id), [t1.id])
+        XCTAssertEqual(store.workspaces[0].selectedTabId, t1.id)
+        XCTAssertEqual(Set(cleaned), Set([t2.focusedTerminalId, t3.focusedTerminalId]))
+    }
+
     func testMoveWorkspaceReorder() {
         let store = WorkspaceStore()
         let a = store.workspaces[0].id
@@ -38,6 +70,21 @@ final class WorkspaceStoreTests: XCTestCase {
         store.moveWorkspace(from: 0, to: 3)
         XCTAssertEqual(store.workspaces.map { $0.name }, ["b", "c", "default"])
         XCTAssertEqual(store.workspaces.last?.id, a)
+    }
+
+    func testAddWorkspaceWithRootPathSeedsInitialTerminalPwd() {
+        let store = WorkspaceStore()
+        var seeded: [(UUID, String)] = []
+        store.seedPwdPolicy = { terminalId, pwd in seeded.append((terminalId, pwd)) }
+
+        let ws = store.addWorkspace(name: "Project", rootPath: "/tmp/project")
+
+        XCTAssertEqual(ws.name, "Project")
+        XCTAssertEqual(ws.rootPath, "/tmp/project")
+        XCTAssertEqual(store.selectedId, ws.id)
+        XCTAssertEqual(seeded.count, 1)
+        XCTAssertEqual(seeded.first?.0, ws.tabs.first?.focusedTerminalId)
+        XCTAssertEqual(seeded.first?.1, "/tmp/project")
     }
 
     func testRenameWorkspaceTrimsAndRejectsEmpty() {
@@ -65,13 +112,16 @@ final class WorkspaceStoreTests: XCTestCase {
         let ws = store.workspaces[0]
         let terminalId = ws.tabs[0].focusedTerminalId
         var cleaned: [UUID] = []
+        var cleanedWorkspaces: [UUID] = []
         store.terminalCleanup = { cleaned.append($0) }
+        store.workspaceCleanup = { cleanedWorkspaces.append($0) }
 
         store.removeWorkspace(ws.id)
 
         XCTAssertTrue(store.workspaces.isEmpty)
         XCTAssertNil(store.selectedId)
         XCTAssertEqual(cleaned, [terminalId])
+        XCTAssertEqual(cleanedWorkspaces, [ws.id])
     }
 
     func testMoveTabReorder() {
@@ -128,5 +178,34 @@ final class WorkspaceStoreTests: XCTestCase {
 
         XCTAssertEqual(TerminalCommandQueue.shared.drain(for: termId), "claude --resume xyz")
         XCTAssertNil(TerminalCommandQueue.shared.drain(for: termId), "drain should be one-shot")
+    }
+
+    func testEnsureGitTabEnqueuesExecutableCommand() {
+        let store = WorkspaceStore()
+        let tab = store.ensureGitTab(command: "  gitui  ")!
+        let termId = tab.layout.allTerminalIds().first!
+
+        XCTAssertEqual(TerminalCommandQueue.shared.drain(for: termId), "gitui")
+    }
+
+    func testLaunchCommandInNewTabBypassesPolicyAndEnqueuesExplicitCommand() {
+        let key = "in0.test.workspace.\(UUID())"
+        let store = WorkspaceStore(persistenceKey: key, seedDefault: true)
+        let wsId = store.workspaces[0].id
+        store.startupCommandPolicy = { _, _, _ in "workspace-default" }
+
+        let tab = store.launchCommandInNewTab(
+            workspaceId: wsId,
+            title: "Codex resume",
+            command: "  codex resume abc12345  "
+        )!
+        let termId = tab.layout.allTerminalIds().first!
+
+        XCTAssertEqual(store.selectedId, wsId)
+        XCTAssertEqual(store.workspaces[0].selectedTabId, tab.id)
+        XCTAssertEqual(TerminalCommandQueue.shared.drain(for: termId), "codex resume abc12345")
+        XCTAssertNil(TerminalCommandQueue.shared.drain(for: termId))
+
+        UserDefaults.standard.removeObject(forKey: key)
     }
 }

@@ -15,5 +15,9 @@ final class NotificationNamesTests: XCTestCase {
         XCTAssertEqual(Notification.Name.in0FocusPrevPane.rawValue, "in0.menu.focusPrevPane")
         XCTAssertEqual(Notification.Name.in0SelectNextTab.rawValue, "in0.menu.selectNextTab")
         XCTAssertEqual(Notification.Name.in0SelectTabAtIndex.rawValue, "in0.menu.selectTabAtIndex")
+        XCTAssertEqual(Notification.Name.in0BeginTerminalSearch.rawValue, "in0.menu.beginTerminalSearch")
+        XCTAssertEqual(Notification.Name.in0FindNext.rawValue,            "in0.menu.findNext")
+        XCTAssertEqual(Notification.Name.in0FindPrevious.rawValue,        "in0.menu.findPrevious")
+        XCTAssertEqual(Notification.Name.in0EndTerminalSearch.rawValue,   "in0.menu.endTerminalSearch")
     }
 }

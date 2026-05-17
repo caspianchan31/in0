@@ -29,4 +29,40 @@ final class GhosttyTerminalViewPwdTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: path) }
         XCTAssertNil(GhosttyTerminalView.validatedDirectory(path))
     }
+
+    func testMarkedTextTracksImeCompositionState() {
+        let view = GhosttyTerminalView(terminalId: UUID())
+
+        view.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        XCTAssertTrue(view.hasMarkedText())
+        XCTAssertEqual(view.markedRange(), NSRange(location: 0, length: 2))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 2, length: 0))
+
+        view.unmarkText()
+
+        XCTAssertFalse(view.hasMarkedText())
+        XCTAssertEqual(view.markedRange(), NSRange(location: NSNotFound, length: 0))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: NSNotFound, length: 0))
+    }
+
+    func testCommittedTextClearsMarkedCompositionWithoutSurface() {
+        let view = GhosttyTerminalView(terminalId: UUID())
+        view.setMarkedText(NSAttributedString(string: "zhong"), selectedRange: NSRange(location: 5, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        view.insertText("中", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        XCTAssertFalse(view.hasMarkedText())
+        XCTAssertEqual(view.selectedRange(), NSRange(location: NSNotFound, length: 0))
+    }
+
+    func testControlModifiedKeysForwardToTerminal() {
+        XCTAssertTrue(GhosttyTerminalView.shouldForwardModifiedKeyToTerminal(modifierFlags: [.control]))
+        XCTAssertTrue(GhosttyTerminalView.shouldForwardModifiedKeyToTerminal(modifierFlags: [.control, .shift]))
+    }
+
+    func testCommandShortcutsStayOnResponderChain() {
+        XCTAssertFalse(GhosttyTerminalView.shouldForwardModifiedKeyToTerminal(modifierFlags: [.command]))
+        XCTAssertFalse(GhosttyTerminalView.shouldForwardModifiedKeyToTerminal(modifierFlags: [.command, .control]))
+    }
 }

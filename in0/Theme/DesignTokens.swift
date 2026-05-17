@@ -26,6 +26,10 @@ enum DesignTokens {
 
     enum Layout {
         static let sidebarWidth: CGFloat = 300
+        static let pluginCardSidebarWidth: CGFloat = 360
+        static let pluginCardSidebarMinWidth: CGFloat = 300
+        static let pluginCardSidebarMaxWidth: CGFloat = 460
+        static let terminalContentMinWidth: CGFloat = 520
         static let sidebarContentLeadingInset: CGFloat = 0
         static let tabBarHeight: CGFloat = 34
         static let rowHeight: CGFloat = 42

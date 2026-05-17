@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// Picks the active UI language. `system` follows the macOS preferred
-/// locale; `en` and `zh` force the corresponding xcstrings bundle.
+/// locale; other choices force the corresponding xcstrings bundle.
 ///
 /// A `.shared` singleton exists so AppKit code (which can't read SwiftUI's
 /// `\.locale` environment) can resolve strings through `L10n.string(_:)`.
@@ -10,7 +10,7 @@ import Observation
 @Observable
 final class LanguageStore {
     enum Choice: String, Codable, CaseIterable {
-        case system, en, zh
+        case system, en, zh, zhHant, ja
     }
 
     static let shared = LanguageStore()
@@ -50,6 +50,8 @@ final class LanguageStore {
         case .system: return .current
         case .en: return Locale(identifier: "en")
         case .zh: return Locale(identifier: "zh-Hans")
+        case .zhHant: return Locale(identifier: "zh-Hant")
+        case .ja: return Locale(identifier: "ja")
         }
     }
 
@@ -61,6 +63,8 @@ final class LanguageStore {
         case .system: return .main
         case .en: return Self.bundle(for: "en") ?? .main
         case .zh: return Self.bundle(for: "zh-Hans") ?? .main
+        case .zhHant: return Self.bundle(for: "zh-Hant") ?? .main
+        case .ja: return Self.bundle(for: "ja") ?? .main
         }
     }
 

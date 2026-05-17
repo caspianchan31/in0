@@ -19,6 +19,19 @@ final class TerminalStatusStoreTests: XCTestCase {
         XCTAssertEqual(store.agents[id], .claude)
     }
 
+    func testSetStatusCanUpdateAgentWhenStatusIsUnchanged() {
+        let store = TerminalStatusStore()
+        let id = UUID()
+        let now = Date()
+        let status = TerminalStatus.running(startedAt: now, detail: "Edit Foo.swift")
+
+        store.setStatus(status, for: id, agent: .claude)
+        store.setStatus(status, for: id, agent: .codex)
+
+        XCTAssertEqual(store.status(for: id), status)
+        XCTAssertEqual(store.agents[id], .codex)
+    }
+
     func testNeedsInputGateRequiresRunning() {
         let store = TerminalStatusStore()
         let id = UUID()
@@ -62,6 +75,32 @@ final class TerminalStatusStoreTests: XCTestCase {
         store.setStatus(.idle(since: Date()), for: other)
         store.markRead(other)
         XCTAssertEqual(store.status(for: other).caseName, "idle")
+    }
+
+    func testMarkReadIsIdempotent() {
+        let store = TerminalStatusStore()
+        let id = UUID()
+        let finishedAt = Date(timeIntervalSince1970: 10)
+        let firstRead = Date(timeIntervalSince1970: 20)
+        let secondRead = Date(timeIntervalSince1970: 30)
+        store.setStatus(
+            .success(exitCode: 0, duration: 1, finishedAt: finishedAt, agent: .claude),
+            for: id
+        )
+
+        store.markRead(id, at: firstRead)
+        store.markRead(id, at: secondRead)
+
+        XCTAssertEqual(
+            store.status(for: id),
+            .success(
+                exitCode: 0,
+                duration: 1,
+                finishedAt: finishedAt,
+                agent: .claude,
+                readAt: firstRead
+            )
+        )
     }
 
     func testRemoveClearsStatusAndAgent() {

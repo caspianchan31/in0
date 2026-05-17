@@ -10,6 +10,8 @@ struct ContentView: View {
     @Environment(QuickActionsStore.self) private var quickActions
     @Environment(UpdateStore.self) private var updateStore
     @Environment(LanguageStore.self) private var language
+    @Environment(PluginCardStore.self) private var pluginCards
+    @Environment(TerminalSearchStore.self) private var terminalSearch
 
     @State private var sidebarCollapsed = false
     @State private var showSettings = false
@@ -30,28 +32,44 @@ struct ContentView: View {
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
-                TabBridgeContainer(
-                    theme: t,
-                    contentOpacity: contentOpacity,
-                    shadowIntensity: shadow
-                ) {
-                    ZStack {
-                        TabBridge()
-                            .opacity(showSettings ? 0 : 1)
-                            .allowsHitTesting(!showSettings)
-                        if showSettings {
-                            SettingsView(
-                                initialSection: pendingSettingsSection,
-                                onClose: closeSettings
-                            )
-                            .id(pendingSettingsSection?.rawValue ?? "settings-default")
-                            .environment(settings)
-                            .environment(configStore)
-                            .environment(quickActions)
-                            .environment(theme)
-                            .environment(language)
-                            .environment(updateStore)
+                HStack(spacing: DT.Space.sm) {
+                    TabBridgeContainer(
+                        theme: t,
+                        contentOpacity: contentOpacity,
+                        shadowIntensity: shadow
+                    ) {
+                        ZStack(alignment: .topTrailing) {
+                            TabBridge()
+                                .opacity(showSettings ? 0 : 1)
+                                .allowsHitTesting(!showSettings)
+                            if showSettings {
+                                SettingsView(
+                                    initialSection: pendingSettingsSection,
+                                    onClose: closeSettings
+                                )
+                                .id(pendingSettingsSection?.rawValue ?? "settings-default")
+                                .environment(settings)
+                                .environment(configStore)
+                                .environment(quickActions)
+                                .environment(theme)
+                                .environment(language)
+                                .environment(updateStore)
+                            }
+                            if terminalSearch.isPresented && !showSettings {
+                                TerminalSearchBar()
+                                    .padding(.top, DT.Layout.tabBarHeight + DT.Space.sm)
+                                    .padding(.trailing, DT.Space.md)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            }
                         }
+                    }
+                    .frame(minWidth: DT.Layout.terminalContentMinWidth)
+                    .layoutPriority(1)
+
+                    if pluginCards.isOpen {
+                        PluginCardSidebarView()
+                            .frame(width: pluginCards.width)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
                 .padding(.top, 28)
@@ -72,11 +90,20 @@ struct ContentView: View {
 
                 if !sidebarCollapsed {
                     IconButton(theme: t, help: "New workspace") {
-                        workspaces.addWorkspace(name: "workspace \(workspaces.workspaces.count + 1)")
+                        WorkspaceFolderPicker.createWorkspace(in: workspaces)
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 16, weight: .medium))
                     }
+                }
+
+                IconButton(theme: t, help: pluginCards.isOpen ? "Hide plugin cards" : "Show plugin cards") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        pluginCards.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 14, weight: .semibold))
                 }
             }
             .foregroundStyle(t.foreground)
@@ -84,7 +111,7 @@ struct ContentView: View {
             .padding(.top, DT.Space.sm)
         }
         .background(t.sidebar.opacity(bgOpacity))
-        .frame(minWidth: 980, minHeight: 620)
+        .frame(minWidth: windowMinWidth, minHeight: 620)
         .background(t.sidebar.opacity(bgOpacity))
         .background(WindowAccessor { window in
             window.appearance = NSAppearance(named: t.sidebarIsDark ? .darkAqua : .aqua)
@@ -114,6 +141,29 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .in0OpenGitTab)) { _ in
             workspaces.ensureGitTab(command: settings.gitViewerCommand)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .in0BeginTerminalSearch)) { _ in
+            guard !showSettings else { return }
+            terminalSearch.open(for: focusedTerminalId)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .in0FindNext)) { _ in
+            guard !showSettings else { return }
+            if terminalSearch.isPresented {
+                terminalSearch.next()
+            } else {
+                terminalSearch.open(for: focusedTerminalId)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .in0FindPrevious)) { _ in
+            guard !showSettings else { return }
+            if terminalSearch.isPresented {
+                terminalSearch.previous()
+            } else {
+                terminalSearch.open(for: focusedTerminalId)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .in0EndTerminalSearch)) { _ in
+            terminalSearch.close()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .in0OpenSettings)) { note in
             if let raw = note.userInfo?["section"] as? String,
                let section = SettingsSection(rawValue: raw) {
@@ -131,11 +181,14 @@ struct ContentView: View {
         // moment the user looks at the tab. This is what tells the user
         // "I've seen the result" without requiring a manual dismiss.
         .onChange(of: focusedTerminalId) { _, newValue in
+            terminalSearch.setFocusedTerminal(newValue)
             guard let id = newValue else { return }
             statuses.markRead(id)
         }
         .onExitCommand {
-            if showSettings {
+            if terminalSearch.isPresented {
+                terminalSearch.close()
+            } else if showSettings {
                 closeSettings()
             }
         }
@@ -148,7 +201,19 @@ struct ContentView: View {
 
     private var headerControlsLeading: CGFloat {
         if sidebarCollapsed { return 78 }
-        return DT.Layout.sidebarWidth - 56
+        return DT.Layout.sidebarWidth - 92
+    }
+
+    private var windowMinWidth: CGFloat {
+        let sidebarWidth = sidebarCollapsed ? 0 : DT.Layout.sidebarWidth
+        let pluginWidth = pluginCards.isOpen ? pluginCards.width + DT.Space.sm : 0
+        let collapsedPadding = sidebarCollapsed ? DT.Space.sm : 0
+        let fittedWidth = sidebarWidth
+            + collapsedPadding
+            + DT.Layout.terminalContentMinWidth
+            + pluginWidth
+            + DT.Space.md
+        return max(980, fittedWidth)
     }
 
     private func updateSettingsKeyMonitor(isPresented: Bool) {
@@ -242,6 +307,121 @@ private struct TabBridgeContainer<Content: View>: View {
     }
 }
 
+private struct TerminalSearchBar: View {
+    @Environment(ThemeManager.self) private var theme
+    @Environment(TerminalSearchStore.self) private var search
+    @Environment(LanguageStore.self) private var language
+    @FocusState private var focused: Bool
+
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { search.query },
+            set: { search.updateQuery($0) }
+        )
+    }
+
+    var body: some View {
+        let t = theme.currentTheme
+        HStack(spacing: DT.Space.xs) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(t.textSecondary)
+
+            TextField(String(localized: L10n.Menu.find.withLocale(language.locale)), text: queryBinding)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .font(.system(size: 12))
+                .frame(width: 190)
+                .onSubmit { search.next() }
+
+            Text(counterText)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(t.textSecondary)
+                .frame(width: 52, alignment: .trailing)
+
+            Divider()
+                .frame(height: 18)
+
+            searchButton(symbol: "chevron.up", help: "Previous result") {
+                search.previous()
+            }
+            searchButton(symbol: "chevron.down", help: "Next result") {
+                search.next()
+            }
+            searchButton(symbol: "xmark", help: "Close search") {
+                search.close()
+            }
+        }
+        .padding(.horizontal, DT.Space.sm)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: DT.Radius.md, style: .continuous)
+                .fill(t.sidebar.opacity(0.96))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DT.Radius.md, style: .continuous)
+                .strokeBorder(t.border, lineWidth: DT.Stroke.hairline)
+        )
+        .foregroundStyle(t.foreground)
+        .shadow(color: .black.opacity(t.sidebarIsDark ? 0.35 : 0.12), radius: 12, x: 0, y: 4)
+        .onAppear {
+            focused = true
+        }
+    }
+
+    private var counterText: String {
+        guard !search.query.isEmpty else { return "" }
+        guard let total = search.total else { return "..." }
+        guard total > 0 else { return "0/0" }
+        let selected = min(max(search.selected ?? 1, 1), total)
+        return "\(selected)/\(total)"
+    }
+
+    private func searchButton(symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+@MainActor
+private enum WorkspaceFolderPicker {
+    private static var activePanel: NSOpenPanel?
+
+    static func createWorkspace(in store: WorkspaceStore) {
+        let panel = NSOpenPanel()
+        activePanel = panel
+        panel.title = "Choose Workspace Folder"
+        panel.prompt = "Open"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            Task { @MainActor in
+                defer { activePanel = nil }
+                guard response == .OK, let url = panel.url else { return }
+                createWorkspace(path: url.path, name: defaultName(for: url), in: store)
+                NSApp.activate()
+            }
+        }
+    }
+
+    static func createWorkspace(path: String, name: String, in store: WorkspaceStore) {
+        store.addWorkspace(name: name, rootPath: path)
+    }
+
+    private static func defaultName(for url: URL) -> String {
+        let basename = url.lastPathComponent
+        return basename.isEmpty ? url.deletingLastPathComponent().lastPathComponent : basename
+    }
+}
+
 /// Connects the Scene-level menu notifications to store mutations. Lives
 /// inside ContentView so it can read every store from the environment.
 /// Notifications come from `in0App`'s `.commands` block.
@@ -297,7 +477,13 @@ private struct MenuNotificationsListener: ViewModifier {
             }
             // Workspace creation
             .onReceive(NotificationCenter.default.publisher(for: .in0BeginCreateWorkspace)) { _ in
-                workspaces.addWorkspace(name: "workspace \(workspaces.workspaces.count + 1)")
+                WorkspaceFolderPicker.createWorkspace(in: workspaces)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .in0CreateWorkspace)) { note in
+                guard let path = note.userInfo?["path"] as? String else { return }
+                let name = (note.userInfo?["name"] as? String)
+                    ?? URL(fileURLWithPath: path).lastPathComponent
+                WorkspaceFolderPicker.createWorkspace(path: path, name: name, in: workspaces)
             }
             // Open config file in default editor
             .onReceive(NotificationCenter.default.publisher(for: .in0EditConfigFile)) { _ in

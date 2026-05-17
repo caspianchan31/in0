@@ -12,6 +12,7 @@ struct QuickActionRowView: View {
     let store: QuickActionsStore
     let theme: AppTheme
     let isBuiltin: Bool
+    var isPlugin: Bool = false
 
     @Environment(\.locale) private var locale
     @FocusState private var nameFocused: Bool
@@ -26,7 +27,7 @@ struct QuickActionRowView: View {
             )
             .frame(width: 17)
 
-            if isBuiltin {
+            if isBuiltin || isPlugin {
                 Text(store.displayName(for: id, locale: locale))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -52,6 +53,8 @@ struct QuickActionRowView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { commandFocused = true }
                 .accessibilityLabel("Quick action command")
+                .disabled(isPlugin)
+                .opacity(isPlugin ? 0.72 : 1)
 
             Toggle("", isOn: enabledBinding)
                 .toggleStyle(.switch)
@@ -59,7 +62,7 @@ struct QuickActionRowView: View {
                 .labelsHidden()
                 .accessibilityLabel("Enable \(store.displayName(for: id, locale: locale))")
 
-            if !isBuiltin {
+            if !isBuiltin && !isPlugin {
                 Button {
                     store.removeCustomAction(id)
                 } label: {
@@ -89,12 +92,15 @@ struct QuickActionRowView: View {
                 if isBuiltin {
                     return store.builtinCommandOverrides[id] ?? ""
                 }
+                if isPlugin {
+                    return store.defaultCommand(for: id) ?? ""
+                }
                 return store.customActions.first(where: { $0.id == id })?.command ?? ""
             },
             set: { new in
                 if isBuiltin {
                     store.setBuiltinCommand(id, new)
-                } else {
+                } else if !isPlugin {
                     store.updateCustomAction(id, command: new)
                 }
             }
@@ -111,6 +117,9 @@ struct QuickActionRowView: View {
     private var commandPlaceholder: String {
         if let builtin = BuiltinQuickAction.from(id: id) {
             return builtin.defaultCommand
+        }
+        if isPlugin {
+            return store.defaultCommand(for: id) ?? ""
         }
         return String(localized: L10n.Settings.QuickActions.customCommandPlaceholder.withLocale(locale))
     }

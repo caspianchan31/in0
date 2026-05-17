@@ -11,7 +11,8 @@ final class TerminalCommandQueue {
     private init() {}
 
     func enqueue(_ command: String, for terminalId: UUID) {
-        pending[terminalId] = command
+        guard let input = WorkspaceDefaultCommand.startupInput(for: command) else { return }
+        pending[terminalId] = input
     }
 
     func drain(for terminalId: UUID) -> String? {

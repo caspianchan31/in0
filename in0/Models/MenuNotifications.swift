@@ -14,6 +14,8 @@ extension Notification.Name {
     static let in0EditConfigFile      = Notification.Name("in0.menu.editConfigFile")
     // File
     static let in0BeginCreateWorkspace = Notification.Name("in0.menu.beginCreateWorkspace")
+    /// userInfo["path"] = selected folder path, userInfo["name"] = display name
+    static let in0CreateWorkspace      = Notification.Name("in0.menu.createWorkspace")
     // Terminal — tab/pane lifecycle
     static let in0NewTab              = Notification.Name("in0.menu.newTab")
     static let in0ClosePane           = Notification.Name("in0.menu.closePane")
@@ -30,4 +32,9 @@ extension Notification.Name {
     static let in0SelectTabAtIndex    = Notification.Name("in0.menu.selectTabAtIndex")
     // Git tab
     static let in0OpenGitTab          = Notification.Name("in0.menu.openGitTab")
+    // Terminal search
+    static let in0BeginTerminalSearch = Notification.Name("in0.menu.beginTerminalSearch")
+    static let in0FindNext            = Notification.Name("in0.menu.findNext")
+    static let in0FindPrevious        = Notification.Name("in0.menu.findPrevious")
+    static let in0EndTerminalSearch   = Notification.Name("in0.menu.endTerminalSearch")
 }

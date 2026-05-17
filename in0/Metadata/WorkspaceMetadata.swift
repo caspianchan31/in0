@@ -13,6 +13,14 @@ struct WorkspaceMetadataSnapshot: Equatable {
     /// reformat the number every render.
     var prStatus: String?
     var updatedAt: Date
+
+    func hasSameDisplayContent(as other: WorkspaceMetadataSnapshot) -> Bool {
+        gitBranch == other.gitBranch
+            && pwd == other.pwd
+            && openPRCount == other.openPRCount
+            && unreadNotifications == other.unreadNotifications
+            && prStatus == other.prStatus
+    }
 }
 
 @MainActor
@@ -25,6 +33,28 @@ final class WorkspaceMetadataStore {
     }
 
     func set(_ snapshot: WorkspaceMetadataSnapshot, for workspaceId: UUID) {
+        if let current = snapshots[workspaceId],
+           snapshot.hasSameDisplayContent(as: current) {
+            return
+        }
         snapshots[workspaceId] = snapshot
+    }
+
+    func set(_ nextSnapshots: [UUID: WorkspaceMetadataSnapshot]) {
+        var next = snapshots
+        var changed = false
+
+        for (workspaceId, snapshot) in nextSnapshots {
+            if let current = next[workspaceId],
+               snapshot.hasSameDisplayContent(as: current) {
+                continue
+            }
+            next[workspaceId] = snapshot
+            changed = true
+        }
+
+        if changed {
+            snapshots = next
+        }
     }
 }

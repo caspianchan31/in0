@@ -18,8 +18,12 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     private var hasEverHadWindow = false
     private var markedText = NSMutableAttributedString()
+    private var markedSelectedRange = NSRange(location: NSNotFound, length: 0)
     private var keyMonitor: Any?
     private var wantsTerminalKeyEvents = false
+    private var pendingSurfaceSize: SurfacePixelSize?
+    private var appliedSurfaceSize: SurfacePixelSize?
+    private var resizeWorkItem: DispatchWorkItem?
 
     /// Most recent scrollbar state reported by ghostty's `SCROLLBAR`
     /// action. `nil` until the first action arrives. `SurfaceScrollView`
@@ -46,6 +50,11 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         var width: CGFloat
         var height: CGFloat
         static let zero = CellSize(width: 0, height: 0)
+    }
+
+    private struct SurfacePixelSize: Equatable {
+        var width: UInt32
+        var height: UInt32
     }
 
     init(terminalId: UUID) {
@@ -98,6 +107,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
         }
+        resizeWorkItem?.cancel()
         if let surface {
             // dispose() should have been called; this is a safety net.
             ghostty_surface_free(surface)
@@ -130,11 +140,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         )
         if let surface {
             // Sync initial size in case the view already has bounds.
-            let w = UInt32(bounds.width * scale)
-            let h = UInt32(bounds.height * scale)
-            if w > 0 && h > 0 {
-                ghostty_surface_set_size(surface, w, h)
-            }
+            applySurfaceSizeNow(pixelSize(for: bounds.size, scale: scale), to: surface)
             window.makeFirstResponder(self)
             wantsTerminalKeyEvents = true
             // Drain any startup command enqueued by WorkspaceStore's
@@ -142,17 +148,22 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
             // creation time and writes its result into the queue, so the
             // surface only has to play it back.
             if let cmd = TerminalCommandQueue.shared.drain(for: terminalId) {
-                let toSend = cmd.hasSuffix("\n") ? cmd : cmd + "\r"
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                     guard let self, let surface = self.surface else { return }
-                    self.sendText(toSend, to: surface)
+                    self.submitStartupCommand(cmd, to: surface)
                 }
             }
+            window.makeFirstResponder(self)
+            wantsTerminalKeyEvents = true
         }
     }
 
     /// Called by the cache owner when the terminal is closed for good.
     func dispose() {
+        resizeWorkItem?.cancel()
+        resizeWorkItem = nil
+        pendingSurfaceSize = nil
+        appliedSurfaceSize = nil
         if let surface {
             ghostty_surface_free(surface)
             self.surface = nil
@@ -164,6 +175,43 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         defer { liveLock.unlock() }
         live = live.filter { $0.value.view != nil }
         return live.values.compactMap { $0.view?.surface }
+    }
+
+    enum SearchDirection {
+        case next
+        case previous
+
+        var bindingSuffix: String {
+            switch self {
+            case .next: return "next"
+            case .previous: return "previous"
+            }
+        }
+    }
+
+    @discardableResult
+    static func performSearch(_ query: String, terminalId: UUID) -> Bool {
+        guard let view = liveView(for: terminalId) else { return false }
+        return view.runBindingAction("search:\(query)")
+    }
+
+    @discardableResult
+    static func navigateSearch(_ direction: SearchDirection, terminalId: UUID) -> Bool {
+        guard let view = liveView(for: terminalId) else { return false }
+        return view.runBindingAction("navigate_search:\(direction.bindingSuffix)")
+    }
+
+    @discardableResult
+    static func endSearch(terminalId: UUID) -> Bool {
+        guard let view = liveView(for: terminalId) else { return false }
+        return view.runBindingAction("end_search")
+    }
+
+    private static func liveView(for terminalId: UUID) -> GhosttyTerminalView? {
+        liveLock.lock()
+        defer { liveLock.unlock() }
+        live = live.filter { $0.value.view != nil }
+        return live.values.lazy.compactMap(\.view).first { $0.terminalId == terminalId }
     }
 
     private static func register(_ view: GhosttyTerminalView) {
@@ -208,9 +256,51 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        wantsTerminalKeyEvents = true
         focusTerminal()
-        super.mouseDown(with: event)
+        sendMouseButton(.press, button: .left, event: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        sendMousePosition(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        sendMouseButton(.release, button: .left, event: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        focusTerminal()
+        sendMouseButton(.press, button: .right, event: event)
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        sendMousePosition(event)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        sendMouseButton(.release, button: .right, event: event)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        focusTerminal()
+        sendMouseButton(.press, button: .middle, event: event)
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        sendMousePosition(event)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        sendMouseButton(.release, button: .middle, event: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Copy", action: #selector(copy(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Paste", action: #selector(paste(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Select All", action: #selector(selectAll(_:)), keyEquivalent: ""))
+        return menu
     }
 
     override func keyDown(with event: NSEvent) {
@@ -218,19 +308,37 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
             super.keyDown(with: event)
             return
         }
+        if hasMarkedText() {
+            interpretKeyEvents([event])
+            return
+        }
         if sendControlSequence(for: event) {
+            return
+        }
+        if sendModifiedKeyToTerminal(for: event) {
             return
         }
         interpretKeyEvents([event])
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers?.lowercased() == "v" {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+        switch key {
+        case "c":
+            copy(nil)
+            return true
+        case "v":
             paste(nil)
             return true
+        case "a":
+            selectAll(nil)
+            return true
+        default:
+            return super.performKeyEquivalent(with: event)
         }
-        return super.performKeyEquivalent(with: event)
     }
 
     @objc func paste(_ sender: Any?) {
@@ -261,8 +369,9 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
     }
 
     func insertText(_ string: Any, replacementRange: NSRange) {
-        guard let surface, let text = committedText(from: string), !text.isEmpty else { return }
+        guard let text = committedText(from: string), !text.isEmpty else { return }
         unmarkText()
+        guard let surface else { return }
         sendText(text, to: surface)
     }
 
@@ -345,37 +454,129 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         return true
     }
 
+    private func sendModifiedKeyToTerminal(for event: NSEvent) -> Bool {
+        guard let surface,
+              Self.shouldForwardModifiedKeyToTerminal(modifierFlags: event.modifierFlags) else { return false }
+        sendKey(event, text: nil, to: surface)
+        return true
+    }
+
+    static func shouldForwardModifiedKeyToTerminal(modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.control) && !flags.contains(.command)
+    }
+
     private func sendKey(_ event: NSEvent, text: UnsafePointer<CChar>?, to surface: ghostty_surface_t) {
         let input = ghostty_input_key_s(
             action: GHOSTTY_ACTION_PRESS,
             mods: inputMods(from: event),
-            consumed_mods: GHOSTTY_MODS_NONE,
+            consumed_mods: consumedMods(from: event),
             keycode: UInt32(event.keyCode),
             text: text,
-            unshifted_codepoint: 0,
+            unshifted_codepoint: unshiftedCodepoint(from: event),
             composing: false
         )
         _ = ghostty_surface_key(surface, input)
     }
 
+    private enum MouseState {
+        case press
+        case release
+
+        var ghosttyState: ghostty_input_mouse_state_e {
+            switch self {
+            case .press: return GHOSTTY_MOUSE_PRESS
+            case .release: return GHOSTTY_MOUSE_RELEASE
+            }
+        }
+    }
+
+    private enum MouseButton {
+        case left
+        case right
+        case middle
+
+        var ghosttyButton: ghostty_input_mouse_button_e {
+            switch self {
+            case .left: return GHOSTTY_MOUSE_LEFT
+            case .right: return GHOSTTY_MOUSE_RIGHT
+            case .middle: return GHOSTTY_MOUSE_MIDDLE
+            }
+        }
+    }
+
+    private func sendMouseButton(_ state: MouseState, button: MouseButton, event: NSEvent) {
+        guard let surface else { return }
+        let point = ghosttyPoint(from: event)
+        let mods = inputMods(from: event)
+        ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
+        _ = ghostty_surface_mouse_button(surface, state.ghosttyState, button.ghosttyButton, mods)
+    }
+
+    private func sendMousePosition(_ event: NSEvent) {
+        guard let surface else { return }
+        let point = ghosttyPoint(from: event)
+        ghostty_surface_mouse_pos(surface, point.x, point.y, inputMods(from: event))
+    }
+
+    private func ghosttyPoint(from event: NSEvent) -> NSPoint {
+        let local = convert(event.locationInWindow, from: nil)
+        return NSPoint(x: local.x, y: bounds.height - local.y)
+    }
+
+    private func submitStartupCommand(_ command: String, to surface: ghostty_surface_t) {
+        sendText(command, to: surface)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, self.surface == surface else { return }
+            self.sendReturnKey(to: surface)
+        }
+    }
+
+    private func sendReturnKey(to surface: ghostty_surface_t) {
+        "\r".withCString { ptr in
+            let input = ghostty_input_key_s(
+                action: GHOSTTY_ACTION_PRESS,
+                mods: GHOSTTY_MODS_NONE,
+                consumed_mods: GHOSTTY_MODS_NONE,
+                keycode: 36,
+                text: ptr,
+                unshifted_codepoint: 0,
+                composing: false
+            )
+            _ = ghostty_surface_key(surface, input)
+        }
+    }
+
     private func inputMods(from event: NSEvent) -> ghostty_input_mods_e {
+        ghosttyMods(from: event.modifierFlags)
+    }
+
+    private func consumedMods(from event: NSEvent) -> ghostty_input_mods_e {
+        ghosttyMods(from: event.modifierFlags.subtracting([.control, .command]))
+    }
+
+    private func ghosttyMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var mods = GHOSTTY_MODS_NONE
-        if event.modifierFlags.contains(.shift) {
+        if flags.contains(.shift) {
             mods = ghostty_input_mods_e(rawValue: mods.rawValue | GHOSTTY_MODS_SHIFT.rawValue)
         }
-        if event.modifierFlags.contains(.control) {
+        if flags.contains(.control) {
             mods = ghostty_input_mods_e(rawValue: mods.rawValue | GHOSTTY_MODS_CTRL.rawValue)
         }
-        if event.modifierFlags.contains(.option) {
+        if flags.contains(.option) {
             mods = ghostty_input_mods_e(rawValue: mods.rawValue | GHOSTTY_MODS_ALT.rawValue)
         }
-        if event.modifierFlags.contains(.command) {
+        if flags.contains(.command) {
             mods = ghostty_input_mods_e(rawValue: mods.rawValue | GHOSTTY_MODS_SUPER.rawValue)
         }
-        if event.modifierFlags.contains(.capsLock) {
+        if flags.contains(.capsLock) {
             mods = ghostty_input_mods_e(rawValue: mods.rawValue | GHOSTTY_MODS_CAPS.rawValue)
         }
         return mods
+    }
+
+    private func unshiftedCodepoint(from event: NSEvent) -> UInt32 {
+        event.characters(byApplyingModifiers: [])?.unicodeScalars.first?.value ?? 0
     }
 
     private func sendText(_ text: String, to surface: ghostty_surface_t) {
@@ -397,11 +598,17 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
             guard let self,
                   event.window === self.window,
                   self.surface != nil,
+                  self.hasTerminalFocus,
                   self.wantsTerminalKeyEvents else {
                 return event
             }
+            guard !self.hasMarkedText() else { return event }
             return self.sendControlSequence(for: event) ? nil : event
         }
+    }
+
+    private var hasTerminalFocus: Bool {
+        window?.firstResponder === self
     }
 
     private func removeKeyMonitor() {
@@ -420,19 +627,38 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
     }
 
     func selectedRange() -> NSRange {
-        NSRange(location: NSNotFound, length: 0)
+        markedSelectedRange
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text: String
         if let attributed = string as? NSAttributedString {
+            text = attributed.string
             markedText = NSMutableAttributedString(attributedString: attributed)
-        } else if let text = string as? String {
-            markedText = NSMutableAttributedString(string: text)
+        } else if let plainText = string as? String {
+            text = plainText
+            markedText = NSMutableAttributedString(string: plainText)
+        } else {
+            return
+        }
+        markedSelectedRange = selectedRange
+
+        guard let surface else { return }
+        if text.isEmpty {
+            ghostty_surface_preedit(surface, nil, 0)
+        } else {
+            text.withCString { ptr in
+                ghostty_surface_preedit(surface, ptr, UInt(text.utf8.count))
+            }
         }
     }
 
     func unmarkText() {
         markedText = NSMutableAttributedString()
+        markedSelectedRange = NSRange(location: NSNotFound, length: 0)
+        if let surface {
+            ghostty_surface_preedit(surface, nil, 0)
+        }
     }
 
     func validAttributesForMarkedText() -> [NSAttributedString.Key] {
@@ -449,18 +675,70 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         guard let window else { return .zero }
-        return window.convertToScreen(convert(bounds, to: nil))
+        actualRange?.pointee = range
+
+        let rectInView: NSRect
+        if let surface {
+            var x: Double = 0
+            var y: Double = 0
+            var width: Double = max(Double(cellSize.width), 1)
+            var height: Double = max(Double(cellSize.height), 1)
+            ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+            rectInView = NSRect(
+                x: x,
+                y: bounds.height - CGFloat(y),
+                width: max(CGFloat(width), 1),
+                height: max(CGFloat(height), cellSize.height, 1)
+            )
+        } else {
+            rectInView = NSRect(x: bounds.minX, y: bounds.minY, width: 1, height: max(cellSize.height, 1))
+        }
+
+        return window.convertToScreen(convert(rectInView, to: nil))
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        guard let surface else { return }
-        let scale = window?.backingScaleFactor ?? 2.0
-        let w = UInt32(newSize.width * scale)
-        let h = UInt32(newSize.height * scale)
-        if w > 0 && h > 0 {
-            ghostty_surface_set_size(surface, w, h)
+        scheduleSurfaceResize(for: newSize)
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        scheduleSurfaceResize(for: bounds.size)
+    }
+
+    private func scheduleSurfaceResize(for size: NSSize) {
+        guard surface != nil else { return }
+        guard let pixelSize = pixelSize(for: size, scale: window?.backingScaleFactor ?? 2.0) else { return }
+        guard pixelSize != appliedSurfaceSize,
+              pixelSize != pendingSurfaceSize else { return }
+
+        pendingSurfaceSize = pixelSize
+        guard resizeWorkItem == nil else { return }
+
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.resizeWorkItem = nil
+            guard let surface = self.surface,
+                  let pending = self.pendingSurfaceSize else { return }
+            self.pendingSurfaceSize = nil
+            self.applySurfaceSizeNow(pending, to: surface)
         }
+        resizeWorkItem = item
+        DispatchQueue.main.async(execute: item)
+    }
+
+    private func applySurfaceSizeNow(_ size: SurfacePixelSize?, to surface: ghostty_surface_t) {
+        guard let size, size != appliedSurfaceSize else { return }
+        ghostty_surface_set_size(surface, size.width, size.height)
+        appliedSurfaceSize = size
+    }
+
+    private func pixelSize(for size: NSSize, scale: CGFloat) -> SurfacePixelSize? {
+        let width = UInt32(size.width * scale)
+        let height = UInt32(size.height * scale)
+        guard width > 0 && height > 0 else { return nil }
+        return SurfacePixelSize(width: width, height: height)
     }
 
     /// Reject a working-directory hint that doesn't point at an existing

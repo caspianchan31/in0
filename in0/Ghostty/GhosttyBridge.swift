@@ -29,6 +29,12 @@ final class GhosttyBridge {
     /// Per-terminal scrollbar updates: (terminalId, total, offset, len).
     var onScrollbar: ((UUID, UInt64, UInt64, UInt64) -> Void)?
 
+    /// Search lifecycle and result counters emitted by libghostty.
+    var onStartSearch: ((UUID, String?) -> Void)?
+    var onEndSearch: ((UUID) -> Void)?
+    var onSearchTotal: ((UUID, Int) -> Void)?
+    var onSearchSelected: ((UUID, Int) -> Void)?
+
     private init() {}
 
     /// True after `initialize()` has produced a non-null `ghostty_app_t`.
@@ -318,6 +324,53 @@ private func actionCallback(
             }
         }
         return true
+    case GHOSTTY_ACTION_START_SEARCH:
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let raw = ghostty_surface_userdata(surface)
+        else { return true }
+        let needle = action.action.start_search.needle.map { String(cString: $0) }
+        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(raw).takeUnretainedValue()
+        let terminalId = view.terminalId
+        DispatchQueue.main.async {
+            GhosttyBridge.shared.onStartSearch?(terminalId, needle)
+        }
+        return true
+    case GHOSTTY_ACTION_END_SEARCH:
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let raw = ghostty_surface_userdata(surface)
+        else { return true }
+        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(raw).takeUnretainedValue()
+        let terminalId = view.terminalId
+        DispatchQueue.main.async {
+            GhosttyBridge.shared.onEndSearch?(terminalId)
+        }
+        return true
+    case GHOSTTY_ACTION_SEARCH_TOTAL:
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let raw = ghostty_surface_userdata(surface)
+        else { return true }
+        let total = Int(action.action.search_total.total)
+        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(raw).takeUnretainedValue()
+        let terminalId = view.terminalId
+        DispatchQueue.main.async {
+            GhosttyBridge.shared.onSearchTotal?(terminalId, total)
+        }
+        return true
+    case GHOSTTY_ACTION_SEARCH_SELECTED:
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let raw = ghostty_surface_userdata(surface)
+        else { return true }
+        let selected = Int(action.action.search_selected.selected)
+        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(raw).takeUnretainedValue()
+        let terminalId = view.terminalId
+        DispatchQueue.main.async {
+            GhosttyBridge.shared.onSearchSelected?(terminalId, selected)
+        }
+        return true
     default:
         return true
     }
@@ -328,7 +381,16 @@ private func readClipboardCallback(
     _ kind: ghostty_clipboard_e,
     _ state: UnsafeMutableRawPointer?
 ) -> Bool {
-    return false
+    guard kind == GHOSTTY_CLIPBOARD_STANDARD,
+          let userdata,
+          let text = TerminalClipboardPayload.payload(from: NSPasteboard.general),
+          !text.isEmpty else { return false }
+    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(userdata).takeUnretainedValue()
+    guard let surface = view.surface else { return false }
+    text.withCString { ptr in
+        ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+    }
+    return true
 }
 
 private func confirmReadClipboardCallback(
@@ -347,7 +409,36 @@ private func writeClipboardCallback(
     _ count: Int,
     _ confirm: Bool
 ) {
-    // no-op for V1
+    guard kind == GHOSTTY_CLIPBOARD_STANDARD,
+          let content,
+          count > 0 else { return }
+
+    var items: [(NSPasteboard.PasteboardType, String)] = []
+    for index in 0..<count {
+        let item = content[index]
+        guard let data = item.data,
+              let value = String(cString: data, encoding: .utf8),
+              !value.isEmpty else { continue }
+        let mime = item.mime.flatMap { String(cString: $0, encoding: .utf8) } ?? "text/plain"
+        let type: NSPasteboard.PasteboardType
+        switch mime {
+        case "text/plain":
+            type = .string
+        case "text/html":
+            type = .html
+        default:
+            type = NSPasteboard.PasteboardType(mime)
+        }
+        items.append((type, value))
+    }
+    guard !items.isEmpty else { return }
+
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.declareTypes(items.map(\.0), owner: nil)
+    for (type, value) in items {
+        pasteboard.setString(value, forType: type)
+    }
 }
 
 private func closeSurfaceCallback(
@@ -355,4 +446,66 @@ private func closeSurfaceCallback(
     _ processAlive: Bool
 ) {
     // V1: surface lifetime tracked by SurfaceCache; no-op here.
+}
+
+enum TerminalClipboardPayload {
+    static func payload(from pasteboard: NSPasteboard) -> String? {
+        if let filePayload = fileURLPayload(from: pasteboard) {
+            return filePayload
+        }
+        if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            return text
+        }
+        if let imagePayload = imagePayload(from: pasteboard) {
+            return imagePayload
+        }
+        return nil
+    }
+
+    static func shellQuotedPath(_ path: String) -> String {
+        "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private static func fileURLPayload(from pasteboard: NSPasteboard) -> String? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL],
+              !urls.isEmpty else { return nil }
+        let paths = urls.map { shellQuotedPath($0.path) }
+        return paths.joined(separator: " ")
+    }
+
+    private static func imagePayload(from pasteboard: NSPasteboard) -> String? {
+        if let pngData = pasteboard.data(forType: .png),
+           let path = writeImageData(pngData, fileExtension: "png") {
+            return shellQuotedPath(path)
+        }
+        guard let tiffData = pasteboard.data(forType: .tiff),
+              let image = NSImage(data: tiffData),
+              let pngData = pngData(from: image),
+              let path = writeImageData(pngData, fileExtension: "png") else {
+            return nil
+        }
+        return shellQuotedPath(path)
+    }
+
+    private static func pngData(from image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    private static func writeImageData(_ data: Data, fileExtension ext: String) -> String? {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("in0/PasteboardImages", isDirectory: true)
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("in0/PasteboardImages", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("paste-\(UUID().uuidString).\(ext)")
+            try data.write(to: file, options: .atomic)
+            return file.path
+        } catch {
+            return nil
+        }
+    }
 }

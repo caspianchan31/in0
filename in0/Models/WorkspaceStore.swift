@@ -32,7 +32,9 @@ final class WorkspaceStore {
     /// branched from. Installed by `AppDelegate.attach` and backed by
     /// `TerminalPwdStore.inherit(from:to:)`.
     var inheritPwdPolicy: ((_ source: UUID, _ destination: UUID) -> Void)?
+    var seedPwdPolicy: ((_ terminalId: UUID, _ pwd: String) -> Void)?
     var terminalCleanup: ((_ terminalId: UUID) -> Void)?
+    var workspaceCleanup: ((_ workspaceId: UUID) -> Void)?
 
     /// Production init reads/writes the standard `in0.workspaces.v1` key
     /// and seeds a `default` workspace on first launch.
@@ -78,9 +80,17 @@ final class WorkspaceStore {
 
     @discardableResult
     func addWorkspace(name: String) -> Workspace {
-        let ws = Workspace(name: name, tabs: [TerminalTab(title: "shell")])
+        addWorkspace(name: name, rootPath: nil)
+    }
+
+    @discardableResult
+    func addWorkspace(name: String, rootPath: String?) -> Workspace {
+        let ws = Workspace(name: name, rootPath: rootPath, tabs: [TerminalTab(title: "shell")])
         workspaces.append(ws)
         selectedId = ws.id
+        if let rootPath, let terminalId = ws.tabs.first?.focusedTerminalId {
+            seedPwdPolicy?(terminalId, rootPath)
+        }
         save()
         return ws
     }
@@ -88,6 +98,7 @@ final class WorkspaceStore {
     func removeWorkspace(_ id: UUID) {
         if let ws = workspaces.first(where: { $0.id == id }) {
             cleanup(terminalsIn: ws)
+            workspaceCleanup?(ws.id)
         }
         workspaces.removeAll { $0.id == id }
         if selectedId == id { selectedId = workspaces.first?.id }
@@ -178,6 +189,27 @@ final class WorkspaceStore {
             let tab = TerminalTab(title: "shell")
             workspaces[wi].tabs.append(tab)
             workspaces[wi].selectedTabId = tab.id
+        }
+        save()
+    }
+
+    func closeOtherTabs(keeping tabId: UUID, in workspaceId: UUID) {
+        guard let wi = indexOfWorkspace(workspaceId),
+              workspaces[wi].tabs.contains(where: { $0.id == tabId }) else { return }
+        guard closeTabs(inWorkspaceAt: wi, where: { $0.id != tabId }) else { return }
+        workspaces[wi].selectedTabId = tabId
+        save()
+    }
+
+    func closeTabsToRight(of tabId: UUID, in workspaceId: UUID) {
+        guard let wi = indexOfWorkspace(workspaceId),
+              let tabIndex = workspaces[wi].tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        let tabIdsToRight = Set(workspaces[wi].tabs.dropFirst(tabIndex + 1).map(\.id))
+        guard !tabIdsToRight.isEmpty else { return }
+        let selectedWillClose = workspaces[wi].selectedTabId.map { tabIdsToRight.contains($0) } ?? false
+        guard closeTabs(inWorkspaceAt: wi, where: { tabIdsToRight.contains($0.id) }) else { return }
+        if selectedWillClose {
+            workspaces[wi].selectedTabId = tabId
         }
         save()
     }
@@ -326,6 +358,31 @@ final class WorkspaceStore {
         _ = addTab(to: wsId, title: title, quickActionId: quickActionId)
     }
 
+    /// Add a tab and run an explicit command once its terminal surface is
+    /// online. Used by plugins that synthesize a launch command from local
+    /// workspace state instead of going through Quick Actions.
+    @discardableResult
+    func launchCommandInNewTab(workspaceId: UUID, title: String, command: String) -> TerminalTab? {
+        guard let wi = indexOfWorkspace(workspaceId) else { return nil }
+        let inheritSource: UUID? = workspaces[wi].selectedTabId
+            .flatMap { id in workspaces[wi].tabs.first(where: { $0.id == id }) }
+            .map(\.focusedTerminalId)
+
+        let tab = TerminalTab(title: title)
+        workspaces[wi].tabs.append(tab)
+        workspaces[wi].selectedTabId = tab.id
+        selectedId = workspaceId
+
+        if let leafId = tab.layout.allTerminalIds().first {
+            if let src = inheritSource {
+                inheritPwdPolicy?(src, leafId)
+            }
+            TerminalCommandQueue.shared.enqueue(command, for: leafId)
+        }
+        save()
+        return tab
+    }
+
     /// Switch to (or create) the workspace's dedicated git tab. Single
     /// `.git` tab per workspace — repeat clicks just refocus it. The
     /// initial command (`gitui` / `lazygit` / etc.) is queued for the
@@ -456,5 +513,24 @@ final class WorkspaceStore {
 
     private func cleanup(terminalsIn tab: TerminalTab) {
         tab.layout.allTerminalIds().forEach { terminalCleanup?($0) }
+    }
+
+    @discardableResult
+    private func closeTabs(inWorkspaceAt workspaceIndex: Int, where shouldClose: (TerminalTab) -> Bool) -> Bool {
+        let tabsToClose = workspaces[workspaceIndex].tabs.filter(shouldClose)
+        guard !tabsToClose.isEmpty else { return false }
+        tabsToClose.forEach(cleanup(terminalsIn:))
+        let closingIds = Set(tabsToClose.map(\.id))
+        workspaces[workspaceIndex].tabs.removeAll { closingIds.contains($0.id) }
+        if let selected = workspaces[workspaceIndex].selectedTabId,
+           closingIds.contains(selected) {
+            workspaces[workspaceIndex].selectedTabId = workspaces[workspaceIndex].tabs.first?.id
+        }
+        if workspaces[workspaceIndex].tabs.isEmpty {
+            let tab = TerminalTab(title: "shell")
+            workspaces[workspaceIndex].tabs.append(tab)
+            workspaces[workspaceIndex].selectedTabId = tab.id
+        }
+        return true
     }
 }

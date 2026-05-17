@@ -53,6 +53,7 @@ struct SettingsView: View {
         switch selection {
         case .appearance:   AppearanceSectionView()
         case .quickActions: QuickActionsSectionView()
+        case .plugins:      PluginsSectionView()
         case .agents:       AgentsSectionView()
         case .font:         FontSectionView()
         case .terminal:     TerminalSectionView()

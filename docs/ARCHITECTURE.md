@@ -7,7 +7,7 @@
 
 ```
                  ┌──────────────────────────────────────────────┐
-                 │  SwiftUI shell (Sidebar / Settings / footer)  │
+                 │  SwiftUI shell (Sidebar / Settings / cards)   │
                  │  reads stores, calls store mutators           │
                  └────────┬──────────────────────┬───────────────┘
                           │                      │
@@ -51,7 +51,7 @@ Agent CLI  →  bundled wrapper/hook emitter  →  Unix socket  →  HookSocketL
 
 ## Decision 1 — SwiftUI shell + AppKit core (not pure SwiftUI)
 
-**What**: SwiftUI owns Sidebar, Settings, footer, environment injection.
+**What**: SwiftUI owns Sidebar, Settings, plugin cards, footer, environment injection.
 AppKit owns TabBar, NSSplitView, the terminal surface NSView. The bridge is
 `NSViewRepresentable`.
 
@@ -81,11 +81,17 @@ environment from `in0App.body`:
 
 | Store | What it owns |
 |---|---|
-| `WorkspaceStore` | workspaces, tabs, `SplitNode` trees, selection |
+| `WorkspaceStore` | workspaces, project root paths, tabs, `SplitNode` trees, selection |
 | `TerminalPwdStore` | per-terminal `pwd` (driven by ghostty's PWD action) |
 | `TerminalStatusStore` | per-terminal lifecycle status (driven by hooks) |
+| `TerminalSearchStore` | active terminal search UI state and ghostty result counters |
 | `WorkspaceMetadataStore` | derived metadata (git branch) — refreshed every 5s |
 | `ThemeManager` | active `AppTheme` |
+| `PluginStore` | plugin enablement, surfaces, and workspace-card visibility |
+| `PluginCardStore` | right-side plugin-card sidebar open/width UI preferences |
+| `TodoStore` | workspace-scoped todo items |
+| `GitHubScanStore` | local git scan status/results by workspace |
+| `AIHistoryStore` | local AI conversation history scan status/results by workspace |
 
 Views never mutate state directly. They call `store.method(...)`. AppKit views
 get the stores via the bridge.
@@ -98,6 +104,28 @@ to subscribe (or pull on bridge update).
 
 **Cost**: All mutations are main-actor. For a terminal multiplexer this is
 fine; for high-throughput async work it would be a bottleneck.
+
+---
+
+## Decision 2.1 — Plugin cards live beside the terminal
+
+**What**: Plugins surface primarily as a right-side card sidebar inside the
+same workspace. The terminal remains the central AppKit-rendered content;
+cards are SwiftUI views outside `TabBridgeContainer`, not children of
+`TabContentView` or `SplitPaneView`.
+
+**Why**: Cards are contextual workspace tools. Putting them inside the AppKit
+split tree would make them behave like terminal panes and risk corrupting
+`SplitNode` persistence. Putting them in a separate dashboard would make users
+leave the terminal. A sibling SwiftUI sidebar gives context without touching
+terminal surface lifetime, split ratios, or tab selection.
+
+**State split**:
+
+- `PluginStore` owns which plugin cards are visible.
+- `PluginCardStore` owns whether the right sidebar is open and its width.
+- Card data stays in feature stores (`TodoStore`, `GitHubScanStore`,
+  `AIHistoryStore`, `TerminalStatusStore`).
 
 ---
 
@@ -198,7 +226,7 @@ across every view.
 `Ghostty/GhosttyBridge.swift` (app/config/runtime + callbacks) and
 `Ghostty/GhosttyTerminalView.swift` (per-surface NSView). Everywhere else
 goes through `GhosttyBridge.shared.{newSurface, freeSurface, defaultEnv,
-onPwdChanged}`.
+onPwdChanged}` or typed store callbacks such as terminal search state.
 
 **Why**: ghostty's C API is unstable; constraining the contact surface to
 two files means the day libghostty rebrands a struct or splits an enum, you

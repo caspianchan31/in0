@@ -58,6 +58,18 @@ final class LanguageStoreTests: XCTestCase {
         XCTAssertEqual(store.locale.identifier, "en")
     }
 
+    func testLocaleForTraditionalChinese() {
+        let store = LanguageStore(storageKey: testKey)
+        store.choice = .zhHant
+        XCTAssertEqual(store.locale.identifier, "zh-Hant")
+    }
+
+    func testLocaleForJapanese() {
+        let store = LanguageStore(storageKey: testKey)
+        store.choice = .ja
+        XCTAssertEqual(store.locale.identifier, "ja")
+    }
+
     func testLocaleForSystemMatchesCurrent() {
         let store = LanguageStore(storageKey: testKey)
         store.choice = .system
@@ -75,6 +87,20 @@ final class LanguageStoreTests: XCTestCase {
         let store = LanguageStore(storageKey: testKey)
         store.choice = .en
         XCTAssertTrue(store.effectiveBundle.bundlePath.contains("en.lproj"),
+                      "bundlePath = \(store.effectiveBundle.bundlePath)")
+    }
+
+    func testEffectiveBundleForTraditionalChineseFindsLproj() {
+        let store = LanguageStore(storageKey: testKey)
+        store.choice = .zhHant
+        XCTAssertTrue(store.effectiveBundle.bundlePath.contains("zh-Hant.lproj"),
+                      "bundlePath = \(store.effectiveBundle.bundlePath)")
+    }
+
+    func testEffectiveBundleForJapaneseFindsLproj() {
+        let store = LanguageStore(storageKey: testKey)
+        store.choice = .ja
+        XCTAssertTrue(store.effectiveBundle.bundlePath.contains("ja.lproj"),
                       "bundlePath = \(store.effectiveBundle.bundlePath)")
     }
 }

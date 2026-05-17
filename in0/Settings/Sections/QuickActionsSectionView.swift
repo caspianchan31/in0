@@ -31,7 +31,8 @@ struct QuickActionsSectionView: View {
                             id: id,
                             store: store,
                             theme: theme,
-                            isBuiltin: BuiltinQuickAction.from(id: id) != nil
+                            isBuiltin: store.isBuiltinAction(id),
+                            isPlugin: store.isPluginAction(id)
                         )
                     }
                     .onMove { source, destination in

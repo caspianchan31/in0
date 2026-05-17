@@ -250,4 +250,30 @@ final class QuickActionsStoreTests: XCTestCase {
         store.setEnabled("codex", false)
         XCTAssertEqual(store.fullList, ["codex", "gitui", "claude", "opencode"])
     }
+
+    // MARK: - Plugin actions
+
+    func testPluginActionsAppearWhenPluginStoreIsProvided() {
+        let settings = makeSettings()
+        let plugins = PluginStore(settings: settings)
+        let store = QuickActionsStore(settings: settings, plugins: plugins)
+
+        XCTAssertTrue(store.fullList.contains("plugin.todo-list.open"))
+        XCTAssertTrue(store.fullList.contains("plugin.github-scan.run"))
+        XCTAssertEqual(store.displayName(for: "plugin.todo-list.open", locale: .init(identifier: "en")), "Todo")
+    }
+
+    func testPluginActionRequiresBothPluginAndQuickActionEnablement() {
+        let settings = makeSettings()
+        let plugins = PluginStore(settings: settings)
+        let store = QuickActionsStore(settings: settings, plugins: plugins)
+
+        store.setEnabled("plugin.github-scan.run", true)
+        XCTAssertFalse(store.displayList.contains("plugin.github-scan.run"))
+        XCTAssertNil(store.command(for: "plugin.github-scan.run"))
+
+        plugins.setEnabled("github-scan", true)
+        XCTAssertTrue(store.displayList.contains("plugin.github-scan.run"))
+        XCTAssertNotNil(store.command(for: "plugin.github-scan.run"))
+    }
 }

@@ -8,7 +8,7 @@ import XCTest
 @MainActor
 final class L10nSmokeTests: XCTestCase {
 
-    private let languages = ["en", "zh-Hans"]
+    private let languages = ["en", "zh-Hans", "zh-Hant", "ja"]
 
     /// Every key listed in the namespace below is checked against every
     /// language in `languages`. Keep this in lock-step with the
@@ -25,6 +25,7 @@ final class L10nSmokeTests: XCTestCase {
         "settings.section.terminal",
         "settings.section.shell",
         "settings.section.quickActions",
+        "settings.section.plugins",
         "settings.section.agents",
         "settings.section.update",
         "settings.footer.live",
@@ -113,6 +114,8 @@ final class L10nSmokeTests: XCTestCase {
         // Menu
         "menu.newTab",
         "menu.closeTab",
+        "menu.closeOtherTabs",
+        "menu.closeTabsToRight",
         "menu.splitRight",
         "menu.splitDown",
         "menu.focusLeft",

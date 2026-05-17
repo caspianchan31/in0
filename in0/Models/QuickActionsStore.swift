@@ -38,6 +38,7 @@ final class QuickActionsStore {
     }
 
     private let settings: SettingsConfigStore
+    private let plugins: PluginStore?
 
     private static let kEnabled = "in0-quickactions-enabled"
     private static let kCustom  = "in0-quickactions-custom"
@@ -46,8 +47,9 @@ final class QuickActionsStore {
         "in0-quickactions-builtin-command-\(id)"
     }
 
-    init(settings: SettingsConfigStore) {
+    init(settings: SettingsConfigStore, plugins: PluginStore? = nil) {
         self.settings = settings
+        self.plugins = plugins
         load()
     }
 
@@ -57,7 +59,30 @@ final class QuickActionsStore {
 
     private func exists(_ id: QuickActionId) -> Bool {
         BuiltinQuickAction.from(id: id) != nil
+            || plugins?.actionDefinition(id) != nil
             || customActions.contains(where: { $0.id == id })
+    }
+
+    func isBuiltinAction(_ id: QuickActionId) -> Bool {
+        BuiltinQuickAction.from(id: id) != nil
+    }
+
+    func isPluginAction(_ id: QuickActionId) -> Bool {
+        plugins?.actionDefinition(id) != nil
+    }
+
+    func isCustomAction(_ id: QuickActionId) -> Bool {
+        customActions.contains(where: { $0.id == id })
+    }
+
+    func defaultCommand(for id: QuickActionId) -> String? {
+        if let builtin = BuiltinQuickAction.from(id: id) {
+            return builtin.defaultCommand
+        }
+        if let action = plugins?.actionDefinition(id) {
+            return action.command
+        }
+        return customActions.first(where: { $0.id == id })?.command
     }
 
     /// Resolved shell command. nil for unknown ids or empty custom commands.
@@ -68,6 +93,9 @@ final class QuickActionsStore {
                 return override
             }
             return builtin.defaultCommand
+        }
+        if let pluginCommand = plugins?.command(forAction: id) {
+            return pluginCommand
         }
         guard let custom = customActions.first(where: { $0.id == id }) else { return nil }
         let trimmed = custom.command.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -81,6 +109,9 @@ final class QuickActionsStore {
         if let builtin = BuiltinQuickAction.from(id: id) {
             return String(localized: builtin.displayName.withLocale(locale))
         }
+        if let action = plugins?.actionDefinition(id) {
+            return action.title
+        }
         if let custom = customActions.first(where: { $0.id == id }) {
             let trimmed = custom.name.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? id : trimmed
@@ -93,6 +124,9 @@ final class QuickActionsStore {
         if let builtin = BuiltinQuickAction.from(id: id) {
             return builtin.iconSource
         }
+        if let action = plugins?.actionDefinition(id) {
+            return action.icon
+        }
         let name = customActions.first(where: { $0.id == id })?
             .name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let first = name.first.map { Character(String($0).uppercased()) } ?? "?"
@@ -101,7 +135,13 @@ final class QuickActionsStore {
 
     /// What the top bar should render — enabled + existing, in `orderedIds`.
     var displayList: [QuickActionId] {
-        orderedIds.filter { enabledSet.contains($0) && exists($0) }
+        orderedIds.filter { id in
+            let pluginReady = plugins?.actionDefinition(id) == nil
+                || (plugins?.isActionLaunchable(id) ?? false)
+            return enabledSet.contains(id)
+                && exists(id)
+                && pluginReady
+        }
     }
 
     /// What the Settings list should render — all existing ids in order.
@@ -234,6 +274,11 @@ final class QuickActionsStore {
             for b in BuiltinQuickAction.allCases where !seen.contains(b.id) {
                 result.append(b.id); seen.insert(b.id)
             }
+            if let plugins {
+                for id in PluginCatalog.actionIds where !seen.contains(id) && plugins.actionDefinition(id) != nil {
+                    result.append(id); seen.insert(id)
+                }
+            }
             for c in customActions where !seen.contains(c.id) {
                 result.append(c.id); seen.insert(c.id)
             }
@@ -250,6 +295,11 @@ final class QuickActionsStore {
         var seen = Set(orderedIds)
         for b in BuiltinQuickAction.allCases where !seen.contains(b.id) {
             orderedIds.append(b.id); seen.insert(b.id)
+        }
+        if let plugins {
+            for id in PluginCatalog.actionIds where !seen.contains(id) && plugins.actionDefinition(id) != nil {
+                orderedIds.append(id); seen.insert(id)
+            }
         }
         for c in customActions where !seen.contains(c.id) {
             orderedIds.append(c.id); seen.insert(c.id)

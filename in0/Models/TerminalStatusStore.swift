@@ -12,6 +12,10 @@ final class TerminalStatusStore {
     }
 
     func setStatus(_ status: TerminalStatus, for terminalId: UUID, agent: HookAgent? = nil) {
+        if statuses[terminalId] == status,
+           agent == nil || agents[terminalId] == agent {
+            return
+        }
         statuses[terminalId] = status
         if let agent { agents[terminalId] = agent }
     }
@@ -36,11 +40,15 @@ final class TerminalStatusStore {
     func markRead(_ terminalId: UUID, at: Date = Date()) {
         guard let current = statuses[terminalId] else { return }
         switch current {
+        case .success(_, _, _, _, _, let readAt) where readAt != nil:
+            return
         case .success(let ec, let dur, let fin, let agent, let summary, _):
             statuses[terminalId] = .success(
                 exitCode: ec, duration: dur, finishedAt: fin,
                 agent: agent, summary: summary, readAt: at
             )
+        case .failed(_, _, _, _, _, let readAt) where readAt != nil:
+            return
         case .failed(let ec, let dur, let fin, let agent, let summary, _):
             statuses[terminalId] = .failed(
                 exitCode: ec, duration: dur, finishedAt: fin,

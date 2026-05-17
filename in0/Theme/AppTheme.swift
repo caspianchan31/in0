@@ -18,6 +18,7 @@ struct AppTheme: Equatable, Sendable {
     // a high-contrast theme might want pure-saturation greens; a muted
     // theme might prefer washed.
     var success: Color = Color(red: 0.20, green: 0.65, blue: 0.30)
+    var warning: Color = Color(red: 0.80, green: 0.62, blue: 0.16)
     var danger: Color  = Color(red: 0.85, green: 0.22, blue: 0.22)
 
     /// Heuristic dark-mode flag. Read by views that spawn into independent
@@ -48,6 +49,7 @@ struct AppTheme: Equatable, Sendable {
     var textTertiary: Color { textSecondary.opacity(0.7) }
     var textTertiaryNS: NSColor { NSColor(textTertiary) }
     var successNS: NSColor { NSColor(success) }
+    var warningNS: NSColor { NSColor(warning) }
     var dangerNS:  NSColor { NSColor(danger) }
 
     // AppKit-side mirrors. NSColor must be derived; SwiftUI Color → NSColor

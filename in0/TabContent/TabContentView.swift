@@ -27,6 +27,8 @@ final class TabContentView: NSView {
     var onSplitHorizontal: (() -> Void)?
     var onSelectTab: ((UUID) -> Void)?
     var onCloseTab: ((UUID) -> Void)?
+    var onCloseOtherTabs: ((UUID) -> Void)?
+    var onCloseTabsToRight: ((UUID) -> Void)?
     var onRatioChange: ((_ tabId: UUID, _ splitId: UUID, _ ratio: Double) -> Void)?
     var onFocusTerminal: ((_ tabId: UUID, _ terminalId: UUID) -> Void)?
     var onRenameTab: ((_ tabId: UUID, _ newTitle: String) -> Void)?
@@ -98,6 +100,8 @@ final class TabContentView: NSView {
         tabBar.onSplitHorizontal = { [weak self] in self?.onSplitHorizontal?() }
         tabBar.onSelect = { [weak self] id in self?.onSelectTab?(id) }
         tabBar.onClose = { [weak self] id in self?.onCloseTab?(id) }
+        tabBar.onCloseOthers = { [weak self] id in self?.onCloseOtherTabs?(id) }
+        tabBar.onCloseToRight = { [weak self] id in self?.onCloseTabsToRight?(id) }
         tabBar.onRename = { [weak self] id, name in self?.onRenameTab?(id, name) }
         tabBar.onReorder = { [weak self] from, to in self?.onReorderTabs?(from, to) }
         tabBar.onQuickAction = { [weak self] action in self?.onQuickAction?(action) }

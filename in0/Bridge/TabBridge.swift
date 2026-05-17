@@ -33,6 +33,14 @@ struct TabBridge: NSViewRepresentable {
             guard let store, let wsId = store.selectedId else { return }
             store.closeTab(id, in: wsId)
         }
+        view.onCloseOtherTabs = { [weak store] id in
+            guard let store, let wsId = store.selectedId else { return }
+            store.closeOtherTabs(keeping: id, in: wsId)
+        }
+        view.onCloseTabsToRight = { [weak store] id in
+            guard let store, let wsId = store.selectedId else { return }
+            store.closeTabsToRight(of: id, in: wsId)
+        }
         view.onRatioChange = { [weak store] tabId, splitId, ratio in
             guard let store, let wsId = store.selectedId else { return }
             store.updateRatio(splitId, to: ratio, in: wsId, tabId: tabId)

@@ -5,9 +5,21 @@ import Observation
 /// seconds. Writes results into `WorkspaceMetadataStore`.
 @MainActor
 final class MetadataRefresher {
+    private struct Request {
+        let workspaceId: UUID
+        let pwd: String?
+    }
+
+    private struct ResolvedMetadata {
+        let gitBranch: String?
+        let openPRCount: Int?
+    }
+
     private let workspaces: WorkspaceStore
     private let pwds: TerminalPwdStore
     private let metadata: WorkspaceMetadataStore
+    private let branchResolver: @Sendable (String) -> String?
+    private let prCountResolver: @Sendable (String) -> Int?
     private var timer: DispatchSourceTimer?
 
     /// Optional fan-out invoked on the main actor after each tick's
@@ -16,10 +28,18 @@ final class MetadataRefresher {
     /// consumer (SwiftUI observes the @Observable store directly).
     var onRefresh: (() -> Void)?
 
-    init(workspaces: WorkspaceStore, pwds: TerminalPwdStore, metadata: WorkspaceMetadataStore) {
+    init(
+        workspaces: WorkspaceStore,
+        pwds: TerminalPwdStore,
+        metadata: WorkspaceMetadataStore,
+        branchResolver: @escaping @Sendable (String) -> String? = { MetadataRefresher.gitBranch(at: $0) },
+        prCountResolver: @escaping @Sendable (String) -> Int? = { MetadataRefresher.openPRCount(at: $0) }
+    ) {
         self.workspaces = workspaces
         self.pwds = pwds
         self.metadata = metadata
+        self.branchResolver = branchResolver
+        self.prCountResolver = prCountResolver
     }
 
     func start(interval: TimeInterval = 5.0) {
@@ -39,36 +59,50 @@ final class MetadataRefresher {
     }
 
     private func tick() {
-        for ws in workspaces.workspaces {
+        let requests = workspaces.workspaces.compactMap { ws -> Request? in
             guard let tabId = ws.selectedTabId,
-                  let tab = ws.tabs.first(where: { $0.id == tabId }) else { continue }
-            let pwd = pwds.pwd(for: tab.focusedTerminalId)
-            // Run git in background; keep UI responsive.
-            let wsId = ws.id
-            let store = self.metadata
-            DispatchQueue.global(qos: .utility).async { [weak self] in
-                let branch = pwd.flatMap(Self.gitBranch(at:))
-                let prCount = pwd.flatMap(Self.openPRCount(at:))
-                DispatchQueue.main.async {
-                    let prStatus: String? = {
-                        guard let n = prCount, n > 0 else { return nil }
-                        return n == 1 ? "1 PR" : "\(n) PRs"
-                    }()
-                    store.set(
-                        WorkspaceMetadataSnapshot(
-                            gitBranch: branch,
-                            pwd: pwd,
-                            openPRCount: prCount,
-                            unreadNotifications: nil,
-                            prStatus: prStatus,
-                            updatedAt: Date()
-                        ),
-                        for: wsId
-                    )
-                    self?.onRefresh?()
-                }
+                  let tab = ws.tabs.first(where: { $0.id == tabId }) else { return nil }
+            return Request(workspaceId: ws.id, pwd: pwds.pwd(for: tab.focusedTerminalId))
+        }
+        guard !requests.isEmpty else { return }
+
+        let store = self.metadata
+        let branchResolver = self.branchResolver
+        let prCountResolver = self.prCountResolver
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let uniquePwds = Set(requests.compactMap(\.pwd))
+            let resolvedByPwd = uniquePwds.reduce(into: [String: ResolvedMetadata]()) { output, pwd in
+                output[pwd] = ResolvedMetadata(
+                    gitBranch: branchResolver(pwd),
+                    openPRCount: prCountResolver(pwd)
+                )
+            }
+
+            let now = Date()
+            let snapshots = requests.reduce(into: [UUID: WorkspaceMetadataSnapshot]()) { output, request in
+                let resolved = request.pwd.flatMap { resolvedByPwd[$0] }
+                let prCount = resolved?.openPRCount
+                output[request.workspaceId] = WorkspaceMetadataSnapshot(
+                    gitBranch: resolved?.gitBranch,
+                    pwd: request.pwd,
+                    openPRCount: prCount,
+                    unreadNotifications: nil,
+                    prStatus: Self.prStatus(for: prCount),
+                    updatedAt: now
+                )
+            }
+
+            DispatchQueue.main.async {
+                store.set(snapshots)
+                self?.onRefresh?()
             }
         }
+    }
+
+    nonisolated static func prStatus(for count: Int?) -> String? {
+        guard let count, count > 0 else { return nil }
+        return count == 1 ? "1 PR" : "\(count) PRs"
     }
 
     /// Best-effort `gh pr list --json number --jq 'length'`. Returns nil if

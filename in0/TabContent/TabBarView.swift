@@ -26,6 +26,8 @@ final class TabBarView: NSView {
 
     var onSelect: ((UUID) -> Void)?
     var onClose: ((UUID) -> Void)?
+    var onCloseOthers: ((UUID) -> Void)?
+    var onCloseToRight: ((UUID) -> Void)?
     var onAdd: (() -> Void)?
     var onSplitVertical: (() -> Void)?
     var onSplitHorizontal: (() -> Void)?
@@ -177,13 +179,17 @@ final class TabBarView: NSView {
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        for tab in tabs {
+        for (index, tab) in tabs.enumerated() {
             let cell = TabCellView(
                 tab: tab,
                 selected: tab.id == selectedTabId,
                 theme: theme,
+                canCloseOthers: tabs.count > 1,
+                canCloseToRight: index < tabs.count - 1,
                 onSelect: { [weak self] id in self?.onSelect?(id) },
                 onClose: { [weak self] id in self?.onClose?(id) },
+                onCloseOthers: { [weak self] id in self?.onCloseOthers?(id) },
+                onCloseToRight: { [weak self] id in self?.onCloseToRight?(id) },
                 onRename: { [weak self] id, name in self?.onRename?(id, name) }
             )
             stackView.addArrangedSubview(cell)
@@ -340,7 +346,11 @@ private final class TabCellView: NSView, NSTextFieldDelegate {
 
     private let onSelect: (UUID) -> Void
     private let onClose: (UUID) -> Void
+    private let onCloseOthers: (UUID) -> Void
+    private let onCloseToRight: (UUID) -> Void
     private let onRename: (UUID, String) -> Void
+    private let canCloseOthers: Bool
+    private let canCloseToRight: Bool
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let editField = NSTextField()
@@ -354,15 +364,23 @@ private final class TabCellView: NSView, NSTextFieldDelegate {
         tab: TerminalTab,
         selected: Bool,
         theme: AppTheme,
+        canCloseOthers: Bool,
+        canCloseToRight: Bool,
         onSelect: @escaping (UUID) -> Void,
         onClose: @escaping (UUID) -> Void,
+        onCloseOthers: @escaping (UUID) -> Void,
+        onCloseToRight: @escaping (UUID) -> Void,
         onRename: @escaping (UUID, String) -> Void
     ) {
         self.tab = tab
         self.selected = selected
         self.theme = theme
+        self.canCloseOthers = canCloseOthers
+        self.canCloseToRight = canCloseToRight
         self.onSelect = onSelect
         self.onClose = onClose
+        self.onCloseOthers = onCloseOthers
+        self.onCloseToRight = onCloseToRight
         self.onRename = onRename
         super.init(frame: .zero)
         wantsLayer = true
@@ -505,6 +523,43 @@ private final class TabCellView: NSView, NSTextFieldDelegate {
 
     @objc private func closeClicked() {
         onClose(tab.id)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let close = NSMenuItem(
+            title: String(localized: "menu.closeTab"),
+            action: #selector(closeClicked),
+            keyEquivalent: ""
+        )
+        close.target = self
+        menu.addItem(close)
+        let closeOthers = NSMenuItem(
+            title: String(localized: "menu.closeOtherTabs"),
+            action: #selector(closeOthersClicked),
+            keyEquivalent: ""
+        )
+        closeOthers.target = self
+        closeOthers.isEnabled = canCloseOthers
+        menu.addItem(closeOthers)
+
+        let closeRight = NSMenuItem(
+            title: String(localized: "menu.closeTabsToRight"),
+            action: #selector(closeToRightClicked),
+            keyEquivalent: ""
+        )
+        closeRight.target = self
+        closeRight.isEnabled = canCloseToRight
+        menu.addItem(closeRight)
+        return menu
+    }
+
+    @objc private func closeOthersClicked() {
+        onCloseOthers(tab.id)
+    }
+
+    @objc private func closeToRightClicked() {
+        onCloseToRight(tab.id)
     }
 
     private func beginEditing() {

@@ -13,6 +13,12 @@ struct in0App: App {
     @State private var settings: SettingsStore
     @State private var configStore: SettingsConfigStore
     @State private var language = LanguageStore.shared
+    @State private var plugins: PluginStore
+    @State private var pluginCards: PluginCardStore
+    @State private var todos = TodoStore()
+    @State private var gitHubScans = GitHubScanStore()
+    @State private var aiHistories = AIHistoryStore()
+    @State private var terminalSearch = TerminalSearchStore()
     @State private var quickActions: QuickActionsStore
     @State private var updateStore = UpdateStore()
 
@@ -30,9 +36,13 @@ struct in0App: App {
         // 3. QuickActionsStore depends on SettingsConfigStore; build the
         //    config store here so we can hand it in.
         let cfg = SettingsConfigStore()
-        let actions = QuickActionsStore(settings: cfg)
+        let pluginStore = PluginStore(settings: cfg)
+        let cardStore = PluginCardStore(settings: cfg)
+        let actions = QuickActionsStore(settings: cfg, plugins: pluginStore)
         Self.seedBuiltinQuickActionsIfNeeded(actions, configStore: cfg)
         _configStore = State(initialValue: cfg)
+        _plugins = State(initialValue: pluginStore)
+        _pluginCards = State(initialValue: cardStore)
         _quickActions = State(initialValue: actions)
         _settings = State(initialValue: SettingsStore(configStore: cfg))
     }
@@ -54,6 +64,12 @@ struct in0App: App {
                     .environment(settings)
                     .environment(configStore)
                     .environment(language)
+                    .environment(plugins)
+                    .environment(pluginCards)
+                    .environment(todos)
+                    .environment(gitHubScans)
+                    .environment(aiHistories)
+                    .environment(terminalSearch)
                     .environment(quickActions)
                     .environment(updateStore)
                     .environment(\.locale, language.locale)
@@ -68,6 +84,9 @@ struct in0App: App {
                             theme: theme,
                             settings: settings,
                             configStore: configStore,
+                            plugins: plugins,
+                            todos: todos,
+                            terminalSearch: terminalSearch,
                             quickActions: quickActions
                         )
                     }
@@ -92,6 +111,12 @@ struct in0App: App {
             SettingsView()
                 .environment(settings)
                 .environment(configStore)
+                .environment(plugins)
+                .environment(pluginCards)
+                .environment(todos)
+                .environment(gitHubScans)
+                .environment(aiHistories)
+                .environment(terminalSearch)
                 .environment(quickActions)
                 .environment(theme)
                 .environment(language)
@@ -180,6 +205,19 @@ struct in0App: App {
                 NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
             }
             .keyboardShortcut("a", modifiers: .command)
+            Divider()
+            Button(String(localized: L10n.Menu.find.withLocale(language.locale))) {
+                post(.in0BeginTerminalSearch)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            Button(String(localized: L10n.Menu.findNext.withLocale(language.locale))) {
+                post(.in0FindNext)
+            }
+            .keyboardShortcut("g", modifiers: .command)
+            Button(String(localized: L10n.Menu.findPrevious.withLocale(language.locale))) {
+                post(.in0FindPrevious)
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
         }
     }
 
@@ -346,6 +384,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         theme: ThemeManager,
         settings: SettingsStore,
         configStore: SettingsConfigStore,
+        plugins: PluginStore,
+        todos: TodoStore,
+        terminalSearch: TerminalSearchStore,
         quickActions: QuickActionsStore
     ) {
         guard refresher == nil else { return }
@@ -358,10 +399,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspaces.inheritPwdPolicy = { [weak pwds] src, dst in
             pwds?.inherit(from: src, to: dst)
         }
+        workspaces.seedPwdPolicy = { [weak pwds] terminalId, pwd in
+            pwds?.setPwd(pwd, for: terminalId)
+        }
         workspaces.terminalCleanup = { [weak pwds, weak statuses] terminalId in
             pwds?.forget(terminalId: terminalId)
             statuses?.remove(terminalId)
             ResumeStore.shared.clear(terminalId: terminalId)
+        }
+        workspaces.workspaceCleanup = { [weak todos] workspaceId in
+            todos?.removeWorkspace(workspaceId)
         }
 
         // Wire the StartupCommandResolver in one place. Every new terminal
@@ -397,12 +444,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard settings?.snapshot.followsTerminalBackground ?? true else { return }
             theme?.applyTerminalColor(kind: kind, r: r, g: g, b: b)
         }
+        GhosttyBridge.shared.onStartSearch = { [weak terminalSearch] terminalId, needle in
+            terminalSearch?.applyStartSearch(terminalId: terminalId, needle: needle)
+        }
+        GhosttyBridge.shared.onEndSearch = { [weak terminalSearch] terminalId in
+            terminalSearch?.applyEndSearch(terminalId: terminalId)
+        }
+        GhosttyBridge.shared.onSearchTotal = { [weak terminalSearch] terminalId, total in
+            terminalSearch?.applyTotal(total, terminalId: terminalId)
+        }
+        GhosttyBridge.shared.onSearchSelected = { [weak terminalSearch] terminalId, selected in
+            terminalSearch?.applySelected(selected, terminalId: terminalId)
+        }
         // SettingsConfigStore writes pass through to the same file ghostty
         // reads from; re-derive the chrome theme and let QuickActions pick
         // up any external edits on every debounced flush.
-        configStore.onChange = { [weak theme, weak quickActions] in
+        configStore.onChange = { [weak theme, weak plugins, weak quickActions] in
             GhosttyBridge.shared.reloadConfig()
             theme?.reloadFromGhosttyConfig()
+            plugins?.reloadFromSettings()
             quickActions?.reloadFromSettings()
         }
 

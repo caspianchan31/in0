@@ -1,6 +1,23 @@
 import XCTest
 @testable import in0
 
+private final class LookupCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() {
+        lock.lock()
+        value += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 @MainActor
 final class MetadataRefresherOnRefreshTests: XCTestCase {
 
@@ -30,5 +47,47 @@ final class MetadataRefresherOnRefreshTests: XCTestCase {
         refresher.stop()
 
         UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    func testTickCoalescesDuplicatePwdLookups() {
+        let key = "in0.test.metadata.\(UUID().uuidString)"
+        let pwdKey = "in0.test.pwds.\(UUID().uuidString)"
+        let workspaces = WorkspaceStore(persistenceKey: key, seedDefault: false)
+        let pwds = TerminalPwdStore(persistenceKey: pwdKey)
+        workspaces.seedPwdPolicy = { terminalId, pwd in
+            pwds.setPwd(pwd, for: terminalId)
+        }
+        _ = workspaces.addWorkspace(name: "one", rootPath: "/tmp/in0-shared")
+        _ = workspaces.addWorkspace(name: "two", rootPath: "/tmp/in0-shared")
+
+        let branchLookups = LookupCounter()
+        let prLookups = LookupCounter()
+        let metadata = WorkspaceMetadataStore()
+        let refresher = MetadataRefresher(
+            workspaces: workspaces,
+            pwds: pwds,
+            metadata: metadata,
+            branchResolver: { path in
+                branchLookups.increment()
+                return path.hasSuffix("in0-shared") ? "main" : nil
+            },
+            prCountResolver: { _ in
+                prLookups.increment()
+                return 2
+            }
+        )
+
+        let exp = expectation(description: "onRefresh fires once")
+        refresher.onRefresh = { exp.fulfill() }
+        refresher.start(interval: 10)
+        wait(for: [exp], timeout: 5)
+        refresher.stop()
+
+        XCTAssertEqual(branchLookups.count, 1)
+        XCTAssertEqual(prLookups.count, 1)
+        XCTAssertEqual(metadata.snapshots.count, 2)
+
+        UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: pwdKey)
     }
 }
