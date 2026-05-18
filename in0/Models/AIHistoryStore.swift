@@ -68,7 +68,7 @@ final class AIHistoryStore {
 
         return AIHistoryResult(
             rootPath: root.path,
-            entries: Array(entries.prefix(20)),
+            entries: entries,
             scannedAt: Date(),
             error: entries.isEmpty ? "No AI history files found in this workspace." : nil
         )

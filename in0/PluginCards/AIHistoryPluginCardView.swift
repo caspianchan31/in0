@@ -26,7 +26,7 @@ struct AIHistoryPluginCardView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(t.textSecondary)
                 } else {
-                    ForEach(entries.prefix(3)) { entry in
+                    ForEach(entries) { entry in
                         entryRow(entry, theme: t)
                     }
                 }

@@ -124,6 +124,21 @@ final class AIHistoryStoreTests: XCTestCase {
         XCTAssertEqual(result.entries.first?.agent, "AI")
     }
 
+    func testScanReturnsAllMatchedHistoryEntries() throws {
+        let root = try makeTempDir()
+        let codexDir = root.appendingPathComponent(".codex/sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+        for index in 0..<25 {
+            let file = codexDir.appendingPathComponent("session-\(index).jsonl")
+            try #"{"role":"user","content":"history entry \#(index)"}"#
+                .write(to: file, atomically: true, encoding: .utf8)
+        }
+
+        let result = try performLocalScan(root: root)
+
+        XCTAssertEqual(result.entries.count, 25)
+    }
+
     func testScanIgnoresLargeFiles() throws {
         let root = try makeTempDir()
         let dir = root.appendingPathComponent(".claude", isDirectory: true)
