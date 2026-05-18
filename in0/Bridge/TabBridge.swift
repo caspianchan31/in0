@@ -73,7 +73,7 @@ struct TabBridge: NSViewRepresentable {
             )
         }
         if let ws = store.selectedWorkspace {
-            view.apply(workspace: ws)
+            view.apply(workspace: ws, liveTerminalIds: store.liveTerminalIds)
         }
         view.applyQuickActions(currentDescriptors())
         return view
@@ -82,7 +82,7 @@ struct TabBridge: NSViewRepresentable {
     func updateNSView(_ nsView: TabContentView, context: Context) {
         nsView.theme = themeManager.currentTheme
         if let ws = store.selectedWorkspace {
-            nsView.apply(workspace: ws)
+            nsView.apply(workspace: ws, liveTerminalIds: store.liveTerminalIds)
         } else {
             nsView.clearWorkspace()
         }
@@ -121,4 +121,12 @@ struct TabBridge: NSViewRepresentable {
     }
 
     final class Coordinator {}
+}
+
+private extension WorkspaceStore {
+    var liveTerminalIds: Set<UUID> {
+        Set(workspaces.flatMap { workspace in
+            workspace.tabs.flatMap { $0.layout.allTerminalIds() }
+        })
+    }
 }

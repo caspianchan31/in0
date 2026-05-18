@@ -112,9 +112,9 @@ final class TabContentView: NSView {
         bounds.fill()
     }
 
-    /// Render `workspace`. Reuses cached pane views per tab id; reaps any
-    /// surfaces that no longer appear in the workspace's full layout set.
-    func apply(workspace: Workspace) {
+    /// Render `workspace`. Reuses cached pane views per tab id; reaps only
+    /// surfaces that no longer appear in any workspace.
+    func apply(workspace: Workspace, liveTerminalIds: Set<UUID>) {
         self.workspace = workspace
         tabBar.apply(tabs: workspace.tabs, selected: workspace.selectedTabId)
 
@@ -124,8 +124,7 @@ final class TabContentView: NSView {
             paneCache[tabId]?.removeFromSuperview()
             paneCache.removeValue(forKey: tabId)
         }
-        let allLeafIds = Set(workspace.tabs.flatMap { $0.layout.allTerminalIds() })
-        cache.reapMissing(aliveIds: allLeafIds)
+        cache.reapMissing(aliveIds: liveTerminalIds)
 
         // Mount the selected tab.
         guard let selId = workspace.selectedTabId,
