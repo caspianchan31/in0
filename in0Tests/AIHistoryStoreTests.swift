@@ -63,6 +63,24 @@ final class AIHistoryStoreTests: XCTestCase {
         XCTAssertEqual(result.entries.first?.resumeCommand, "claude --resume 92596567-4cf9-4a63-bb27-e32fbdf0bdc2")
     }
 
+    func testScanSkipsClaudeArchiveAgentSessions() throws {
+        let root = try makeTempDir()
+        let home = try makeTempDir()
+        let archiveDir = home.appendingPathComponent(".claude/projects/-tmp-workspace/_archive-agent", isDirectory: true)
+        try FileManager.default.createDirectory(at: archiveDir, withIntermediateDirectories: true)
+        let file = archiveDir.appendingPathComponent("ffd088b1-1e4f-4e71-8dd6-bbab6144fd86.jsonl")
+        try """
+        {"type":"queue-operation","sessionId":"ffd088b1-1e4f-4e71-8dd6-bbab6144fd86"}
+        {"type":"user","cwd":"\(root.path)","message":{"content":"archived worker task"}}
+        """
+            .write(to: file, atomically: true, encoding: .utf8)
+
+        let result = AIHistoryStore.performScan(rootPath: root.path, homePath: home.path)
+
+        XCTAssertTrue(result.entries.isEmpty)
+        XCTAssertEqual(result.error, "No AI history files found in this workspace.")
+    }
+
     func testScanFindsGlobalCodexSessionsForWorkspace() throws {
         let root = try makeTempDir()
         let home = try makeTempDir()

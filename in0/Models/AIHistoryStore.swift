@@ -197,7 +197,7 @@ final class AIHistoryStore {
 
     private nonisolated static func shouldSkipDirectory(_ url: URL) -> Bool {
         guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return false }
-        return ["node_modules", ".git", ".build", "DerivedData", "vendor"].contains(url.lastPathComponent)
+        return ["node_modules", ".git", ".build", "DerivedData", "vendor", "_archive-agent"].contains(url.lastPathComponent)
     }
 
     private nonisolated static func isInsideWorkspace(_ url: URL, root: URL) -> Bool {
